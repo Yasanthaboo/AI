@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS floor_plans (
 );
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS client TEXT NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
-ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';`)
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;`)
 	if err != nil {
 		return fmt.Errorf("ensure project schema: %w", err)
 	}
@@ -61,10 +62,50 @@ func (service *PostgresService) CreateProject(details Details) (Project, error) 
 	return project, err
 }
 
-func (service *PostgresService) GetProject(id string) (Project, bool) {
+const projectColumns = `id, name, client, location, description, created_at, status, archived`
+
+func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var project Project
-	err := service.db.QueryRow(`SELECT id, name, client, location, description, created_at, status FROM projects WHERE id = $1`, id).Scan(&project.ID, &project.Name, &project.Client, &project.Location, &project.Description, &project.CreatedAt, &project.Status)
+	err := row.Scan(&project.ID, &project.Name, &project.Client, &project.Location, &project.Description, &project.CreatedAt, &project.Status, &project.Archived)
+	return project, err
+}
+
+func (service *PostgresService) GetProject(id string) (Project, bool) {
+	project, err := scanProject(service.db.QueryRow(`SELECT `+projectColumns+` FROM projects WHERE id = $1`, id))
 	return project, err == nil
+}
+
+func (service *PostgresService) ListProjects() []Project {
+	rows, err := service.db.Query(`SELECT ` + projectColumns + ` FROM projects ORDER BY created_at DESC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var projects []Project
+	for rows.Next() {
+		if project, err := scanProject(rows); err == nil {
+			projects = append(projects, project)
+		}
+	}
+	return projects
+}
+
+func (service *PostgresService) SetArchived(id string, archived bool) (Project, error) {
+	result, err := service.db.Exec(`UPDATE projects SET archived = $2 WHERE id = $1`, id, archived)
+	if err != nil {
+		return Project{}, err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return Project{}, fmt.Errorf("project %q not found", id)
+	}
+	project, _ := service.GetProject(id)
+	return project, nil
+}
+
+func (service *PostgresService) FloorPlanForProject(projectID string) (FloorPlan, bool) {
+	var floorPlan FloorPlan
+	err := service.db.QueryRow(`SELECT id, project_id, file_name, content_type, file_size, uploaded_at FROM floor_plans WHERE project_id = $1`, projectID).Scan(&floorPlan.ID, &floorPlan.ProjectID, &floorPlan.FileName, &floorPlan.ContentType, &floorPlan.FileSize, &floorPlan.UploadedAt)
+	return floorPlan, err == nil
 }
 
 func (service *PostgresService) SaveFloorPlan(projectID, fileName, contentType string, content []byte) (FloorPlan, error) {

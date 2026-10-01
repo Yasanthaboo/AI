@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/example/ai-quantity-surveyor/api/internal/domain"
 )
@@ -19,15 +20,19 @@ const (
 )
 
 type Candidate struct {
-	ID                   string    `json:"id"`
-	FloorPlanID          string    `json:"floorPlanId"`
-	ConfirmationRevision int       `json:"confirmationRevision,omitempty"`
-	DrawingAspect        float64   `json:"drawingAspect,omitempty"`
-	Rooms                []Room    `json:"rooms"`
-	Doors                []Opening `json:"doors"`
-	Windows              []Opening `json:"windows"`
-	State                State     `json:"analysisState"`
-	ErrorMessage         string    `json:"errorMessage,omitempty"`
+	ID                   string     `json:"id"`
+	FloorPlanID          string     `json:"floorPlanId"`
+	ConfirmationRevision int        `json:"confirmationRevision,omitempty"`
+	DrawingAspect        float64    `json:"drawingAspect,omitempty"`
+	Engine               string     `json:"engine,omitempty"`
+	Model                string     `json:"model,omitempty"`
+	StartedAt            *time.Time `json:"startedAt,omitempty"`
+	CompletedAt          *time.Time `json:"completedAt,omitempty"`
+	Rooms                []Room     `json:"rooms"`
+	Doors                []Opening  `json:"doors"`
+	Windows              []Opening  `json:"windows"`
+	State                State      `json:"analysisState"`
+	ErrorMessage         string     `json:"errorMessage,omitempty"`
 }
 
 // Bounds is a room's extent on the drawing as fractions of its width and height.
@@ -47,6 +52,27 @@ type Room struct {
 	Bounds      *Bounds             `json:"bounds,omitempty"`
 	Confidence  float64             `json:"confidence"`
 	Uncertainty string              `json:"uncertainty,omitempty"`
+	// Assumptions names fields the user accepted from configured defaults, e.g. "wallHeight".
+	Assumptions []string `json:"assumptions,omitempty"`
+}
+
+var assumableFields = map[string]bool{"wallHeight": true}
+
+func sanitizeAssumptions(candidate *Candidate) {
+	for index := range candidate.Rooms {
+		var kept []string
+		for _, field := range candidate.Rooms[index].Assumptions {
+			if assumableFields[field] {
+				kept = append(kept, field)
+			}
+		}
+		candidate.Rooms[index].Assumptions = kept
+	}
+}
+
+// ModelNamer is implemented by analyzers that can report the model they call.
+type ModelNamer interface {
+	ModelName() string
 }
 
 // sanitizeBounds drops unusable room bounds and rescales 0-1000 model coordinates.

@@ -190,6 +190,74 @@ func (repository *revisionRepository) ConfirmationRevision(id string, revision i
 	return Confirmation{}, false
 }
 
+func (repository *revisionRepository) Confirmations(id string) []Confirmation {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	var result []Confirmation
+	for _, snapshot := range repository.snapshots {
+		if snapshot.AnalysisID == id {
+			result = append(result, snapshot)
+		}
+	}
+	return result
+}
+
+func waitReady(t *testing.T, service *Service, id string) Candidate {
+	t.Helper()
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if candidate, ok := service.Get(id); ok && candidate.State == StateReady {
+			return candidate
+		}
+	}
+	t.Fatal("analysis did not complete")
+	return Candidate{}
+}
+
+func (analyzer namedAnalyzer) ModelName() string { return string(analyzer) + "-model" }
+
+func TestAnalysisRecordsEngineModelTimingAndHistory(t *testing.T) {
+	service := NewServiceWithEngines(DemoAnalyzer{}, map[string]Analyzer{"demo": DemoAnalyzer{}, "gemini": namedAnalyzer("gemini")}, nil)
+	first, err := service.StartWithEngine("demo", "floor-plan-1", []byte("drawing"), "plan.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := waitReady(t, service, first.ID)
+	if ready.Engine != "demo" || ready.Model != "demo" || ready.StartedAt == nil || ready.CompletedAt == nil || ready.CompletedAt.Before(*ready.StartedAt) {
+		t.Fatalf("missing analysis metadata: %+v", ready)
+	}
+	ready.Rooms[0].Confidence, ready.Rooms[0].Uncertainty = 1, ""
+	ready.Rooms[0].Assumptions = []string{"wallHeight", "invented"}
+	confirmed, err := service.Confirm(first.ID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(confirmed.Rooms[0].Assumptions) != 1 || confirmed.Rooms[0].Assumptions[0] != "wallHeight" || confirmed.Engine != "demo" {
+		t.Fatalf("confirmation did not keep metadata and known assumptions: %+v", confirmed.Rooms[0])
+	}
+	ready.Rooms = ready.Rooms[:2]
+	if _, err := service.Confirm(first.ID, ready); err != nil {
+		t.Fatal(err)
+	}
+	history := service.Confirmations(first.ID)
+	if len(history) != 2 || history[0].Revision != 1 || len(history[1].Candidate.Rooms) != 2 || history[0].ConfirmedAt.IsZero() {
+		t.Fatalf("unexpected confirmation history: %+v", history)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	second, err := service.StartWithEngine("gemini", "floor-plan-1", []byte("drawing"), "plan.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitReady(t, service, second.ID)
+	latest, ok := service.LatestForFloorPlan("floor-plan-1")
+	if !ok || latest.ID != second.ID || latest.Model != "gemini-model" {
+		t.Fatalf("latest analysis = %+v", latest)
+	}
+	if _, ok := service.LatestForFloorPlan("other"); ok {
+		t.Fatal("unexpected analysis for unknown floor plan")
+	}
+}
+
 func TestConfirmationRevisionsSurviveServiceRestart(t *testing.T) {
 	repository := &revisionRepository{}
 	service := NewServiceWithRepository(DemoAnalyzer{}, repository)

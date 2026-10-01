@@ -6,10 +6,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/example/ai-quantity-surveyor/api/internal/analysis"
 	"github.com/example/ai-quantity-surveyor/api/internal/estimate"
+	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
 )
 
@@ -88,6 +92,7 @@ func main() {
 		}
 		writeJSON(writer, http.StatusOK, projectData)
 	})
+	registerPortfolioHandlers(mux, service, analysisService, estimateService)
 	mux.HandleFunc("POST /api/projects/{id}/floor-plan", func(writer http.ResponseWriter, request *http.Request) {
 		if err := request.ParseMultipartForm(project.MaxFloorPlanSize); err != nil {
 			writeError(writer, http.StatusBadRequest, "UploadFailed", "could not read uploaded floor plan", true)
@@ -213,7 +218,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:3001")
 		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS")
 		if request.Method == http.MethodOptions {
 			writer.WriteHeader(http.StatusNoContent)
 			return
@@ -222,7 +227,72 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
+func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses *analysis.Service, estimates *estimate.Service) {
+	mux.HandleFunc("GET /api/projects", func(writer http.ResponseWriter, request *http.Request) {
+		projects := store.ListProjects()
+		summaries := make([]portfolio.Summary, 0, len(projects))
+		for _, item := range projects {
+			summaries = append(summaries, portfolio.Summarize(store, analyses, estimates, item))
+		}
+		sort.SliceStable(summaries, func(left, right int) bool { return summaries[left].UpdatedAt.After(summaries[right].UpdatedAt) })
+		writeJSON(writer, http.StatusOK, summaries)
+	})
+	mux.HandleFunc("GET /api/projects/{id}/summary", func(writer http.ResponseWriter, request *http.Request) {
+		item, ok := store.GetProject(request.PathValue("id"))
+		if !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
+			return
+		}
+		writeJSON(writer, http.StatusOK, portfolio.Summarize(store, analyses, estimates, item))
+	})
+	mux.HandleFunc("PATCH /api/projects/{id}", func(writer http.ResponseWriter, request *http.Request) {
+		var input struct {
+			Archived *bool `json:"archived"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 4<<10)).Decode(&input); err != nil || input.Archived == nil {
+			writeError(writer, http.StatusBadRequest, "InvalidRequest", `request body must be {"archived": true|false}`, false)
+			return
+		}
+		updated, err := store.SetArchived(request.PathValue("id"), *input.Archived)
+		if err != nil {
+			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
+			return
+		}
+		writeJSON(writer, http.StatusOK, updated)
+	})
+	mux.HandleFunc("POST /api/projects/{id}/duplicate", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := store.GetProject(request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
+			return
+		}
+		copied, err := project.Duplicate(store, request.PathValue("id"))
+		if err != nil {
+			writeError(writer, http.StatusInternalServerError, "DuplicateFailed", "project could not be duplicated", true)
+			return
+		}
+		writeJSON(writer, http.StatusCreated, copied)
+	})
+	mux.HandleFunc("GET /api/floor-plans/{id}/file", func(writer http.ResponseWriter, request *http.Request) {
+		floorPlan, ok := store.GetFloorPlan(request.PathValue("id"))
+		content, found := store.GetFile(request.PathValue("id"))
+		// Serve by the validated extension, never the client-supplied content type.
+		contentType := map[string]string{".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}[strings.ToLower(filepath.Ext(floorPlan.FileName))]
+		if !ok || !found || contentType == "" {
+			writeError(writer, http.StatusNotFound, "NotFound", "floor plan not found", false)
+			return
+		}
+		writer.Header().Set("Content-Type", contentType)
+		writer.Header().Set("Content-Disposition", "inline")
+		writer.Header().Set("X-Content-Type-Options", "nosniff")
+		writer.Header().Set("Cache-Control", "private, max-age=3600")
+		_, _ = writer.Write(content)
+	})
+}
+
 func registerConfirmationHandlers(mux *http.ServeMux, analysisService *analysis.Service) {
+	mux.HandleFunc("GET /api/analyses/{id}/confirmations", func(writer http.ResponseWriter, request *http.Request) {
+		writeJSON(writer, http.StatusOK, append([]analysis.Confirmation{}, analysisService.Confirmations(request.PathValue("id"))...))
+	})
 	mux.HandleFunc("GET /api/analyses/{id}/confirmed-data", func(writer http.ResponseWriter, request *http.Request) {
 		result, ok := analysisService.LatestConfirmation(request.PathValue("id"))
 		if !ok {

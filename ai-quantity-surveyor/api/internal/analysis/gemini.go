@@ -19,6 +19,13 @@ type GeminiAnalyzer struct {
 	Client   *http.Client
 }
 
+func (analyzer GeminiAnalyzer) ModelName() string {
+	if analyzer.Model == "" {
+		return "gemini-3.8-flash"
+	}
+	return analyzer.Model
+}
+
 func (analyzer GeminiAnalyzer) Analyze(ctx context.Context, content []byte, fileName string) (Candidate, error) {
 	if len(content) == 0 {
 		return Candidate{}, fmt.Errorf("drawing content is empty")
@@ -37,10 +44,7 @@ func (analyzer GeminiAnalyzer) Analyze(ctx context.Context, content []byte, file
 	default:
 		return Candidate{}, fmt.Errorf("unsupported drawing format")
 	}
-	model := analyzer.Model
-	if model == "" {
-		model = "gemini-3.8-flash"
-	}
+	model := analyzer.ModelName()
 	endpoint := analyzer.Endpoint
 	if endpoint == "" {
 		endpoint = "https://generativelanguage.googleapis.com/v1beta"

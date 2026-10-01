@@ -1,10 +1,10 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
-import { jsonInit, request, type Candidate, type Project } from "./api";
+import { jsonInit, request, runAnalysis, type Candidate, type FloorPlan, type Project } from "./api";
 
 type Stage = "idle" | "uploading" | "analyzing" | "preparing" | "error";
-export type FloorPlan = { id: string; fileName: string; fileSize: number };
+export type { FloorPlan };
 
 const engineInfo: Record<string, { label: string; detail: string }> = {
   demo: { label: "Demo", detail: "Sample four-room plan, instant" },
@@ -78,18 +78,10 @@ export default function UploadStep(props: {
       setStage("analyzing");
       setStartedAt(Date.now());
       setNow(Date.now());
-      const started = await request<{ id: string }>(`/api/floor-plans/${plan.id}/analysis`, jsonInit("POST", { engine }));
-      const deadline = Date.now() + (engine === "gemini" ? 6 : 2) * 60_000;
-      let result: Candidate = { analysisState: "Analyzing" };
-      while (result.analysisState === "Analyzing") {
-        if (cancelled.current) return;
-        if (Date.now() > deadline) throw new Error("The analysis is taking too long. Try again or choose another engine.");
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        result = await request<Candidate>(`/api/analyses/${started.id}`);
-      }
-      if (result.analysisState !== "AnalysisReady") throw new Error(result.errorMessage || "The analysis failed.");
+      const finished = await runAnalysis(plan.id, engine, () => cancelled.current);
+      if (!finished) return;
       setStage("preparing");
-      props.onAnalyzed(started.id, result);
+      props.onAnalyzed(finished.id, finished.candidate);
     } catch (failure) {
       if (cancelled.current) return;
       setStage("error");

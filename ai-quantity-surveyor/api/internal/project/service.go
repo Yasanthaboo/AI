@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ type Project struct {
 	Description string    `json:"description,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	Status      string    `json:"status"`
+	Archived    bool      `json:"archived"`
 }
 
 type Details struct {
@@ -74,9 +76,37 @@ type Service struct {
 type Store interface {
 	CreateProject(Details) (Project, error)
 	GetProject(string) (Project, bool)
+	ListProjects() []Project
+	SetArchived(string, bool) (Project, error)
 	SaveFloorPlan(string, string, string, []byte) (FloorPlan, error)
 	GetFloorPlan(string) (FloorPlan, bool)
+	FloorPlanForProject(string) (FloorPlan, bool)
 	GetFile(string) ([]byte, bool)
+}
+
+// Duplicate copies a project's details and drawing into a new project; analyses and estimates are not copied.
+func Duplicate(store Store, id string) (Project, error) {
+	source, ok := store.GetProject(id)
+	if !ok {
+		return Project{}, fmt.Errorf("project %q not found", id)
+	}
+	name := source.Name + " (copy)"
+	if len(name) > 120 {
+		name = strings.TrimSpace(source.Name[:113]) + " (copy)"
+	}
+	copied, err := store.CreateProject(Details{Name: name, Client: source.Client, Location: source.Location, Description: source.Description})
+	if err != nil {
+		return Project{}, err
+	}
+	if floorPlan, ok := store.FloorPlanForProject(id); ok {
+		if content, ok := store.GetFile(floorPlan.ID); ok {
+			if _, err := store.SaveFloorPlan(copied.ID, floorPlan.FileName, floorPlan.ContentType, content); err != nil {
+				return Project{}, err
+			}
+			copied, _ = store.GetProject(copied.ID)
+		}
+	}
+	return copied, nil
 }
 
 func NewService() *Service {
@@ -138,6 +168,40 @@ func (service *Service) GetProject(id string) (Project, bool) {
 	project, ok := service.projects[id]
 	service.mu.RUnlock()
 	return project, ok
+}
+
+func (service *Service) ListProjects() []Project {
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	projects := make([]Project, 0, len(service.projects))
+	for _, project := range service.projects {
+		projects = append(projects, project)
+	}
+	sort.Slice(projects, func(left, right int) bool { return projects[left].CreatedAt.After(projects[right].CreatedAt) })
+	return projects
+}
+
+func (service *Service) SetArchived(id string, archived bool) (Project, error) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	project, ok := service.projects[id]
+	if !ok {
+		return Project{}, fmt.Errorf("project %q not found", id)
+	}
+	project.Archived = archived
+	service.projects[id] = project
+	return project, service.persistLocked()
+}
+
+func (service *Service) FloorPlanForProject(projectID string) (FloorPlan, bool) {
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	for _, floorPlan := range service.floorPlans {
+		if floorPlan.ProjectID == projectID {
+			return floorPlan, true
+		}
+	}
+	return FloorPlan{}, false
 }
 
 func (service *Service) SaveFloorPlan(projectID, fileName, contentType string, content []byte) (FloorPlan, error) {

@@ -28,3 +28,35 @@ func TestSaveFloorPlanValidatesTypeSizeAndOneDrawingRule(t *testing.T) {
 		t.Fatal("expected invalid file error")
 	}
 }
+
+func TestListArchiveAndDuplicate(t *testing.T) {
+	service := NewService()
+	source, _ := service.CreateProject(Details{Name: "House 01", Client: "Client A", Location: "Colombo"})
+	if _, err := service.SaveFloorPlan(source.ID, "plan.png", "image/png", []byte("\x89PNG\r\n\x1a\n")); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := service.SetArchived(source.ID, true)
+	if err != nil || !archived.Archived {
+		t.Fatalf("archive failed: %+v %v", archived, err)
+	}
+	if _, err := service.SetArchived("missing", true); err == nil {
+		t.Fatal("expected missing project error")
+	}
+	copied, err := Duplicate(service, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied.ID == source.ID || copied.Name != "House 01 (copy)" || copied.Client != "Client A" || copied.Archived || copied.Status != "Uploaded" {
+		t.Fatalf("unexpected duplicate: %+v", copied)
+	}
+	plan, ok := service.FloorPlanForProject(copied.ID)
+	if !ok || plan.FileName != "plan.png" {
+		t.Fatalf("drawing was not copied: %+v", plan)
+	}
+	if projects := service.ListProjects(); len(projects) != 2 {
+		t.Fatalf("projects = %+v", projects)
+	}
+	if _, err := Duplicate(service, "missing"); err == nil {
+		t.Fatal("expected missing project error")
+	}
+}

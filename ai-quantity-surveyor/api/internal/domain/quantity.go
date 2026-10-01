@@ -38,6 +38,17 @@ type Room struct {
 	Doors      []Opening   `json:"doors"`
 	Windows    []Opening   `json:"windows"`
 	NoOpenings bool        `json:"noOpeningsConfirmed"`
+	Finish     RoomFinish  `json:"finish"`
+}
+
+// RoomFinish zero value includes every finish with no wall tiling.
+type RoomFinish struct {
+	ExcludePlaster  bool    `json:"excludePlaster,omitempty"`
+	ExcludePaint    bool    `json:"excludePaint,omitempty"`
+	ExcludeFlooring bool    `json:"excludeFlooring,omitempty"`
+	ExcludeCeiling  bool    `json:"excludeCeiling,omitempty"`
+	ExcludeSkirting bool    `json:"excludeSkirting,omitempty"`
+	TilePercent     float64 `json:"tilePercent,omitempty"`
 }
 
 type ConfirmedFloorPlan struct {
@@ -45,30 +56,54 @@ type ConfirmedFloorPlan struct {
 }
 
 type Rates struct {
-	PlasterUSDPerSquareMeter float64 `json:"plasterUsdPerSquareMeter"`
-	PaintUSDPerSquareMeter   float64 `json:"paintUsdPerSquareMeter"`
+	PlasterUSDPerSquareMeter  float64 `json:"plasterUsdPerSquareMeter"`
+	PaintUSDPerSquareMeter    float64 `json:"paintUsdPerSquareMeter"`
+	FlooringUSDPerSquareMeter float64 `json:"flooringUsdPerSquareMeter"`
+	CeilingUSDPerSquareMeter  float64 `json:"ceilingUsdPerSquareMeter"`
+	SkirtingUSDPerMeter       float64 `json:"skirtingUsdPerMeter"`
+	TilingUSDPerSquareMeter   float64 `json:"tilingUsdPerSquareMeter"`
+	WastePercent              float64 `json:"wastePercent"`
 }
 
 type RoomCalculation struct {
 	RoomID          string  `json:"roomId"`
 	RoomName        string  `json:"roomName"`
 	FloorArea       float64 `json:"floorArea"`
+	Perimeter       float64 `json:"perimeter"`
 	GrossWallArea   float64 `json:"grossWallArea"`
 	DoorDeduction   float64 `json:"doorDeduction"`
 	WindowDeduction float64 `json:"windowDeduction"`
+	NetWallArea     float64 `json:"netWallArea"`
 	NetPlasterArea  float64 `json:"netPlasterArea"`
 	PaintArea       float64 `json:"paintArea"`
+	TileArea        float64 `json:"tileArea"`
+	FlooringArea    float64 `json:"flooringArea"`
+	CeilingArea     float64 `json:"ceilingArea"`
+	SkirtingLength  float64 `json:"skirtingLength"`
 	PlasterCostUSD  float64 `json:"plasterCostUsd"`
 	PaintCostUSD    float64 `json:"paintCostUsd"`
+	TilingCostUSD   float64 `json:"tilingCostUsd"`
+	FlooringCostUSD float64 `json:"flooringCostUsd"`
+	CeilingCostUSD  float64 `json:"ceilingCostUsd"`
+	SkirtingCostUSD float64 `json:"skirtingCostUsd"`
+	TotalCostUSD    float64 `json:"totalCostUsd"`
 }
 
 type CalculationResult struct {
-	Rooms                []RoomCalculation `json:"rooms"`
-	TotalPlasterQuantity float64           `json:"totalPlasterQuantity"`
-	TotalPaintQuantity   float64           `json:"totalPaintQuantity"`
-	TotalPlasterCostUSD  float64           `json:"totalPlasterCostUsd"`
-	TotalPaintCostUSD    float64           `json:"totalPaintCostUsd"`
-	GrandTotalUSD        float64           `json:"grandTotalUsd"`
+	Rooms                 []RoomCalculation `json:"rooms"`
+	TotalPlasterQuantity  float64           `json:"totalPlasterQuantity"`
+	TotalPaintQuantity    float64           `json:"totalPaintQuantity"`
+	TotalTilingQuantity   float64           `json:"totalTilingQuantity"`
+	TotalFlooringQuantity float64           `json:"totalFlooringQuantity"`
+	TotalCeilingQuantity  float64           `json:"totalCeilingQuantity"`
+	TotalSkirtingQuantity float64           `json:"totalSkirtingQuantity"`
+	TotalPlasterCostUSD   float64           `json:"totalPlasterCostUsd"`
+	TotalPaintCostUSD     float64           `json:"totalPaintCostUsd"`
+	TotalTilingCostUSD    float64           `json:"totalTilingCostUsd"`
+	TotalFlooringCostUSD  float64           `json:"totalFlooringCostUsd"`
+	TotalCeilingCostUSD   float64           `json:"totalCeilingCostUsd"`
+	TotalSkirtingCostUSD  float64           `json:"totalSkirtingCostUsd"`
+	GrandTotalUSD         float64           `json:"grandTotalUsd"`
 }
 
 func ConvertToMeters(measurement Measurement) (float64, error) {
@@ -121,6 +156,14 @@ func Calculate(plan ConfirmedFloorPlan, rates Rates) (CalculationResult, error) 
 	if !isPositiveFinite(rates.PlasterUSDPerSquareMeter) || !isPositiveFinite(rates.PaintUSDPerSquareMeter) {
 		return CalculationResult{}, errors.New("plaster and paint rates must be positive finite numbers")
 	}
+	for _, rate := range []float64{rates.FlooringUSDPerSquareMeter, rates.CeilingUSDPerSquareMeter, rates.SkirtingUSDPerMeter, rates.TilingUSDPerSquareMeter} {
+		if !isFinite(rate) || rate < 0 {
+			return CalculationResult{}, errors.New("finish rates must be zero or positive finite numbers")
+		}
+	}
+	if !isFinite(rates.WastePercent) || rates.WastePercent < 0 || rates.WastePercent > 50 {
+		return CalculationResult{}, errors.New("waste allowance must be between 0 and 50 percent")
+	}
 
 	result := CalculationResult{Rooms: make([]RoomCalculation, 0, len(plan.Rooms))}
 	for _, room := range plan.Rooms {
@@ -131,10 +174,18 @@ func Calculate(plan ConfirmedFloorPlan, rates Rates) (CalculationResult, error) 
 		result.Rooms = append(result.Rooms, calculation)
 		result.TotalPlasterQuantity += calculation.NetPlasterArea
 		result.TotalPaintQuantity += calculation.PaintArea
+		result.TotalTilingQuantity += calculation.TileArea
+		result.TotalFlooringQuantity += calculation.FlooringArea
+		result.TotalCeilingQuantity += calculation.CeilingArea
+		result.TotalSkirtingQuantity += calculation.SkirtingLength
 		result.TotalPlasterCostUSD += calculation.PlasterCostUSD
 		result.TotalPaintCostUSD += calculation.PaintCostUSD
+		result.TotalTilingCostUSD += calculation.TilingCostUSD
+		result.TotalFlooringCostUSD += calculation.FlooringCostUSD
+		result.TotalCeilingCostUSD += calculation.CeilingCostUSD
+		result.TotalSkirtingCostUSD += calculation.SkirtingCostUSD
+		result.GrandTotalUSD += calculation.TotalCostUSD
 	}
-	result.GrandTotalUSD = result.TotalPlasterCostUSD + result.TotalPaintCostUSD
 	return result, nil
 }
 
@@ -162,18 +213,27 @@ func calculateRoom(room Room, rates Rates) (RoomCalculation, error) {
 		return RoomCalculation{}, fmt.Errorf("room %q wall height: %w", room.Name, err)
 	}
 
+	finish := room.Finish
+	if !isFinite(finish.TilePercent) || finish.TilePercent < 0 || finish.TilePercent > 100 {
+		return RoomCalculation{}, fmt.Errorf("room %q tiling must be between 0 and 100 percent", room.Name)
+	}
+	perimeter := 2 * (length + width)
 	calculation := RoomCalculation{
 		RoomID:        room.ID,
 		RoomName:      room.Name,
 		FloorArea:     length * width,
-		GrossWallArea: 2 * (length + width) * wallHeight,
+		Perimeter:     perimeter,
+		GrossWallArea: perimeter * wallHeight,
 	}
+	doorWidths := 0.0
 	for _, door := range room.Doors {
 		area, err := openingArea(door)
 		if err != nil {
 			return RoomCalculation{}, fmt.Errorf("room %q door %q: %w", room.Name, door.ID, err)
 		}
 		calculation.DoorDeduction += area
+		doorWidth, _ := ConvertToMeters(door.Width)
+		doorWidths += doorWidth
 	}
 	for _, window := range room.Windows {
 		area, err := openingArea(window)
@@ -182,13 +242,34 @@ func calculateRoom(room Room, rates Rates) (RoomCalculation, error) {
 		}
 		calculation.WindowDeduction += area
 	}
-	calculation.NetPlasterArea = calculation.GrossWallArea - calculation.DoorDeduction - calculation.WindowDeduction
-	if calculation.NetPlasterArea < 0 {
+	calculation.NetWallArea = calculation.GrossWallArea - calculation.DoorDeduction - calculation.WindowDeduction
+	if calculation.NetWallArea < 0 {
 		return RoomCalculation{}, fmt.Errorf("room %q deductions exceed gross wall area", room.Name)
 	}
-	calculation.PaintArea = calculation.NetPlasterArea
-	calculation.PlasterCostUSD = calculation.NetPlasterArea * rates.PlasterUSDPerSquareMeter
-	calculation.PaintCostUSD = calculation.PaintArea * rates.PaintUSDPerSquareMeter
+	calculation.TileArea = calculation.NetWallArea * finish.TilePercent / 100
+	if !finish.ExcludePlaster {
+		calculation.NetPlasterArea = calculation.NetWallArea
+	}
+	if !finish.ExcludePaint {
+		calculation.PaintArea = calculation.NetWallArea - calculation.TileArea
+	}
+	if !finish.ExcludeFlooring {
+		calculation.FlooringArea = calculation.FloorArea
+	}
+	if !finish.ExcludeCeiling {
+		calculation.CeilingArea = calculation.FloorArea
+	}
+	if !finish.ExcludeSkirting {
+		calculation.SkirtingLength = math.Max(0, perimeter-doorWidths)
+	}
+	waste := 1 + rates.WastePercent/100
+	calculation.PlasterCostUSD = calculation.NetPlasterArea * waste * rates.PlasterUSDPerSquareMeter
+	calculation.PaintCostUSD = calculation.PaintArea * waste * rates.PaintUSDPerSquareMeter
+	calculation.TilingCostUSD = calculation.TileArea * waste * rates.TilingUSDPerSquareMeter
+	calculation.FlooringCostUSD = calculation.FlooringArea * waste * rates.FlooringUSDPerSquareMeter
+	calculation.CeilingCostUSD = calculation.CeilingArea * waste * rates.CeilingUSDPerSquareMeter
+	calculation.SkirtingCostUSD = calculation.SkirtingLength * waste * rates.SkirtingUSDPerMeter
+	calculation.TotalCostUSD = calculation.PlasterCostUSD + calculation.PaintCostUSD + calculation.TilingCostUSD + calculation.FlooringCostUSD + calculation.CeilingCostUSD + calculation.SkirtingCostUSD
 	return calculation, nil
 }
 

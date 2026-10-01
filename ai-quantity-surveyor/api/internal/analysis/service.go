@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/example/ai-quantity-surveyor/api/internal/domain"
 )
@@ -22,9 +24,10 @@ type Service struct {
 }
 
 type Confirmation struct {
-	AnalysisID string    `json:"analysisId"`
-	Revision   int       `json:"revision"`
-	Candidate  Candidate `json:"candidate"`
+	AnalysisID  string    `json:"analysisId"`
+	Revision    int       `json:"revision"`
+	ConfirmedAt time.Time `json:"confirmedAt"`
+	Candidate   Candidate `json:"candidate"`
 }
 
 type Repository interface {
@@ -51,7 +54,7 @@ func NewServiceWithEngines(defaultAnalyzer Analyzer, engines map[string]Analyzer
 }
 
 func (service *Service) Start(floorPlanID string, content []byte, fileName string) (Candidate, error) {
-	return service.start(service.analyzer, floorPlanID, content, fileName)
+	return service.start("", service.analyzer, floorPlanID, content, fileName)
 }
 
 func (service *Service) StartWithEngine(engine, floorPlanID string, content []byte, fileName string) (Candidate, error) {
@@ -59,21 +62,25 @@ func (service *Service) StartWithEngine(engine, floorPlanID string, content []by
 	if !ok || analyzer == nil {
 		return Candidate{}, fmt.Errorf("analysis engine %q is not available", engine)
 	}
-	return service.start(analyzer, floorPlanID, content, fileName)
+	return service.start(engine, analyzer, floorPlanID, content, fileName)
 }
 
-func (service *Service) start(analyzer Analyzer, floorPlanID string, content []byte, fileName string) (Candidate, error) {
+func (service *Service) start(engine string, analyzer Analyzer, floorPlanID string, content []byte, fileName string) (Candidate, error) {
 	if floorPlanID == "" || len(content) == 0 {
 		return Candidate{}, fmt.Errorf("floor plan content is required")
 	}
-	candidate := Candidate{ID: newID(), FloorPlanID: floorPlanID, State: StateAnalyzing}
+	now := time.Now().UTC()
+	candidate := Candidate{ID: newID(), FloorPlanID: floorPlanID, State: StateAnalyzing, Engine: engine, StartedAt: &now}
+	if namer, ok := analyzer.(ModelNamer); ok {
+		candidate.Model = namer.ModelName()
+	}
 	service.mu.Lock()
 	service.results[candidate.ID] = candidate
 	service.mu.Unlock()
 	if service.repository != nil {
 		_ = service.repository.Save(candidate, false)
 	}
-	go service.run(analyzer, candidate.ID, floorPlanID, content, fileName)
+	go service.run(analyzer, candidate, content, fileName)
 	return candidate, nil
 }
 
@@ -106,7 +113,10 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 	candidate.ID = original.ID
 	candidate.FloorPlanID = original.FloorPlanID
 	candidate.DrawingAspect = original.DrawingAspect
+	candidate.Engine, candidate.Model = original.Engine, original.Model
+	candidate.StartedAt, candidate.CompletedAt = original.StartedAt, original.CompletedAt
 	sanitizeBounds(&candidate)
+	sanitizeAssumptions(&candidate)
 	revision := len(service.snapshots[id]) + 1
 	if repository, ok := service.repository.(ConfirmationRepository); ok {
 		if latest, exists := repository.LatestConfirmation(id); exists && latest.Revision >= revision {
@@ -118,7 +128,7 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 	if err != nil {
 		return Candidate{}, err
 	}
-	snapshot := Confirmation{AnalysisID: id, Revision: revision, Candidate: stored}
+	snapshot := Confirmation{AnalysisID: id, Revision: revision, ConfirmedAt: time.Now().UTC(), Candidate: stored}
 	if repository, ok := service.repository.(ConfirmationRepository); ok {
 		if err := repository.SaveConfirmation(snapshot); err != nil {
 			return Candidate{}, err
@@ -140,6 +150,56 @@ type ConfirmationRepository interface {
 	SaveConfirmation(Confirmation) error
 	LatestConfirmation(string) (Confirmation, bool)
 	ConfirmationRevision(string, int) (Confirmation, bool)
+	Confirmations(string) []Confirmation
+}
+
+// FloorPlanRepository finds the most recently started ready analysis of a floor plan.
+type FloorPlanRepository interface {
+	LatestForFloorPlan(string) (Candidate, bool)
+}
+
+// Confirmations returns every confirmation revision of an analysis, oldest first.
+func (service *Service) Confirmations(id string) []Confirmation {
+	if repository, ok := service.repository.(ConfirmationRepository); ok {
+		return repository.Confirmations(id)
+	}
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	result := make([]Confirmation, 0, len(service.snapshots[id]))
+	for _, snapshot := range service.snapshots[id] {
+		if candidate, err := copyCandidate(snapshot.Candidate); err == nil {
+			snapshot.Candidate = candidate
+			result = append(result, snapshot)
+		}
+	}
+	return result
+}
+
+// LatestForFloorPlan returns the most recently started ready analysis of a floor plan.
+func (service *Service) LatestForFloorPlan(floorPlanID string) (Candidate, bool) {
+	if repository, ok := service.repository.(FloorPlanRepository); ok {
+		return repository.LatestForFloorPlan(floorPlanID)
+	}
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	var matches []Candidate
+	for _, candidate := range service.results {
+		if candidate.FloorPlanID == floorPlanID && candidate.State == StateReady {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 0 {
+		return Candidate{}, false
+	}
+	sort.Slice(matches, func(left, right int) bool { return startedAt(matches[left]).After(startedAt(matches[right])) })
+	return matches[0], true
+}
+
+func startedAt(candidate Candidate) time.Time {
+	if candidate.StartedAt == nil {
+		return time.Time{}
+	}
+	return *candidate.StartedAt
 }
 
 func (service *Service) LatestConfirmation(id string) (Confirmation, bool) {
@@ -204,7 +264,8 @@ func copyCandidate(candidate Candidate) (Candidate, error) {
 	return result, nil
 }
 
-func (service *Service) run(analyzer Analyzer, id, floorPlanID string, content []byte, fileName string) {
+func (service *Service) run(analyzer Analyzer, started Candidate, content []byte, fileName string) {
+	id, floorPlanID := started.ID, started.FloorPlanID
 	candidate, err := analyzer.Analyze(context.Background(), content, fileName)
 	if err != nil {
 		candidate = Candidate{ID: id, FloorPlanID: floorPlanID, State: StateFailed, ErrorMessage: err.Error()}
@@ -215,7 +276,13 @@ func (service *Service) run(analyzer Analyzer, id, floorPlanID string, content [
 			candidate.DrawingAspect = drawingAspect(content)
 		}
 		sanitizeBounds(&candidate)
+		// Assumptions are recorded only by the user at confirmation, never by an engine.
+		for index := range candidate.Rooms {
+			candidate.Rooms[index].Assumptions = nil
+		}
 	}
+	completed := time.Now().UTC()
+	candidate.Engine, candidate.Model, candidate.StartedAt, candidate.CompletedAt = started.Engine, started.Model, started.StartedAt, &completed
 	service.mu.Lock()
 	service.results[id] = candidate
 	service.mu.Unlock()
@@ -225,6 +292,8 @@ func (service *Service) run(analyzer Analyzer, id, floorPlanID string, content [
 }
 
 type DemoAnalyzer struct{}
+
+func (DemoAnalyzer) ModelName() string { return "demo" }
 
 func (DemoAnalyzer) Analyze(_ context.Context, _ []byte, _ string) (Candidate, error) {
 	meters := func(value float64) *domain.Measurement {
