@@ -13,27 +13,43 @@ import (
 )
 
 type Request struct {
-	AnalysisID               string  `json:"analysisId"`
-	PlasterUSDPerSquareMeter float64 `json:"plasterUsdPerSquareMeter"`
-	PaintUSDPerSquareMeter   float64 `json:"paintUsdPerSquareMeter"`
-	TargetCurrency           string  `json:"targetCurrency"`
-	ExchangeRate             float64 `json:"exchangeRate"`
-	ExchangeRateFetchedAt    string  `json:"exchangeRateFetchedAt"`
+	AnalysisID                string                       `json:"analysisId"`
+	PlasterUSDPerSquareMeter  float64                      `json:"plasterUsdPerSquareMeter"`
+	PaintUSDPerSquareMeter    float64                      `json:"paintUsdPerSquareMeter"`
+	FlooringUSDPerSquareMeter float64                      `json:"flooringUsdPerSquareMeter"`
+	CeilingUSDPerSquareMeter  float64                      `json:"ceilingUsdPerSquareMeter"`
+	SkirtingUSDPerMeter       float64                      `json:"skirtingUsdPerMeter"`
+	TilingUSDPerSquareMeter   float64                      `json:"tilingUsdPerSquareMeter"`
+	WastePercent              float64                      `json:"wastePercent"`
+	Finishes                  map[string]domain.RoomFinish `json:"finishes"`
+	TargetCurrency            string                       `json:"targetCurrency"`
+	ExchangeRate              float64                      `json:"exchangeRate"`
+	ExchangeRateFetchedAt     string                       `json:"exchangeRateFetchedAt"`
+}
+
+func (request Request) rates() domain.Rates {
+	return domain.Rates{
+		PlasterUSDPerSquareMeter: request.PlasterUSDPerSquareMeter, PaintUSDPerSquareMeter: request.PaintUSDPerSquareMeter,
+		FlooringUSDPerSquareMeter: request.FlooringUSDPerSquareMeter, CeilingUSDPerSquareMeter: request.CeilingUSDPerSquareMeter,
+		SkirtingUSDPerMeter: request.SkirtingUSDPerMeter, TilingUSDPerSquareMeter: request.TilingUSDPerSquareMeter, WastePercent: request.WastePercent,
+	}
 }
 
 type Version struct {
-	ID                    string                   `json:"id"`
-	ProjectID             string                   `json:"projectId"`
-	Version               int                      `json:"version"`
-	SourceAnalysisID      string                   `json:"sourceAnalysisId"`
-	TargetCurrency        string                   `json:"targetCurrency"`
-	ExchangeRate          float64                  `json:"exchangeRate"`
-	ExchangeRateFetchedAt string                   `json:"exchangeRateFetchedAt"`
-	Result                domain.CalculationResult `json:"result"`
-	ConvertedPlasterCost  float64                  `json:"convertedPlasterCost"`
-	ConvertedPaintCost    float64                  `json:"convertedPaintCost"`
-	ConvertedGrandTotal   float64                  `json:"convertedGrandTotal"`
-	CalculatedAt          time.Time                `json:"calculatedAt"`
+	ID                    string                       `json:"id"`
+	ProjectID             string                       `json:"projectId"`
+	Version               int                          `json:"version"`
+	SourceAnalysisID      string                       `json:"sourceAnalysisId"`
+	TargetCurrency        string                       `json:"targetCurrency"`
+	ExchangeRate          float64                      `json:"exchangeRate"`
+	ExchangeRateFetchedAt string                       `json:"exchangeRateFetchedAt"`
+	Rates                 *domain.Rates                `json:"rates,omitempty"`
+	Finishes              map[string]domain.RoomFinish `json:"finishes,omitempty"`
+	Result                domain.CalculationResult     `json:"result"`
+	ConvertedPlasterCost  float64                      `json:"convertedPlasterCost"`
+	ConvertedPaintCost    float64                      `json:"convertedPaintCost"`
+	ConvertedGrandTotal   float64                      `json:"convertedGrandTotal"`
+	CalculatedAt          time.Time                    `json:"calculatedAt"`
 }
 
 type Service struct {
@@ -68,7 +84,17 @@ func (service *Service) Create(projectID string, request Request) (Version, erro
 		return Version{}, errors.New("confirmed floor-plan data is required")
 	}
 	plan := confirmedPlan(confirmed)
-	result, err := domain.Calculate(plan, domain.Rates{PlasterUSDPerSquareMeter: request.PlasterUSDPerSquareMeter, PaintUSDPerSquareMeter: request.PaintUSDPerSquareMeter})
+	finishes := map[string]domain.RoomFinish{}
+	for index, room := range plan.Rooms {
+		if finish, ok := request.Finishes[room.ID]; ok {
+			plan.Rooms[index].Finish = finish
+			if finish != (domain.RoomFinish{}) {
+				finishes[room.ID] = finish
+			}
+		}
+	}
+	rates := request.rates()
+	result, err := domain.Calculate(plan, rates)
 	if err != nil {
 		return Version{}, err
 	}
@@ -86,7 +112,7 @@ func (service *Service) Create(projectID string, request Request) (Version, erro
 	}
 	service.mu.Lock()
 	defer service.mu.Unlock()
-	version := Version{ID: fmt.Sprintf("estimate-%d", time.Now().UnixNano()), ProjectID: projectID, Version: len(service.versions[projectID]) + 1, SourceAnalysisID: request.AnalysisID, TargetCurrency: request.TargetCurrency, ExchangeRate: request.ExchangeRate, ExchangeRateFetchedAt: request.ExchangeRateFetchedAt, Result: result, ConvertedPlasterCost: plaster, ConvertedPaintCost: paint, ConvertedGrandTotal: grand, CalculatedAt: time.Now().UTC()}
+	version := Version{ID: fmt.Sprintf("estimate-%d", time.Now().UnixNano()), ProjectID: projectID, Version: len(service.versions[projectID]) + 1, SourceAnalysisID: request.AnalysisID, TargetCurrency: request.TargetCurrency, ExchangeRate: request.ExchangeRate, ExchangeRateFetchedAt: request.ExchangeRateFetchedAt, Rates: &rates, Finishes: finishes, Result: result, ConvertedPlasterCost: plaster, ConvertedPaintCost: paint, ConvertedGrandTotal: grand, CalculatedAt: time.Now().UTC()}
 	service.versions[projectID] = append(service.versions[projectID], version)
 	if service.repository != nil {
 		if err := service.repository.Save(version); err != nil {

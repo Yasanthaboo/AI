@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -63,6 +64,13 @@ type OllamaAnalyzer struct {
 	Client   *http.Client
 }
 
+func (analyzer OllamaAnalyzer) ModelName() string {
+	if analyzer.Model == "" {
+		return "llama3.2-vision"
+	}
+	return analyzer.Model
+}
+
 func (analyzer OllamaAnalyzer) Analyze(ctx context.Context, content []byte, fileName string) (Candidate, error) {
 	extension := ""
 	if index := strings.LastIndex(fileName, "."); index >= 0 {
@@ -78,10 +86,7 @@ func (analyzer OllamaAnalyzer) Analyze(ctx context.Context, content []byte, file
 	if endpoint == "" {
 		endpoint = "http://localhost:11434"
 	}
-	model := analyzer.Model
-	if model == "" {
-		model = "llama3.2-vision"
-	}
+	model := analyzer.ModelName()
 	requestBody := map[string]any{
 		"model":  model,
 		"stream": false,
@@ -186,10 +191,52 @@ func normalizeConfidence(content string) ([]byte, error) {
 					}
 				}
 			}
+			if uncertainty, exists := typed["uncertainty"]; exists {
+				if text := flattenText(uncertainty); text != "" {
+					typed["uncertainty"] = text
+				} else {
+					delete(typed, "uncertainty")
+				}
+			}
 		}
 		return current
 	}
 	return json.Marshal(normalize(value))
+}
+
+// flattenText turns model output such as {"length": "blurred"} or ["a", "b"] into one readable string.
+func flattenText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case []any:
+		var parts []string
+		for _, item := range typed {
+			if text := flattenText(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "; ")
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var parts []string
+		for _, key := range keys {
+			if text := flattenText(typed[key]); text != "" {
+				parts = append(parts, key+": "+text)
+			}
+		}
+		return strings.Join(parts, "; ")
+	case bool:
+		return ""
+	default:
+		return fmt.Sprint(typed)
+	}
 }
 
 func stringValue(value any) string {

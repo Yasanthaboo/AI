@@ -1,4 +1,6 @@
-import type { Measurement, Room } from "./api";
+import type { Measurement, Opening, Room } from "./api";
+
+export type ModelOpening = { id: string; kind: "door" | "window"; width: number; height: number; sill: number };
 
 export type ModelRoom = {
   id: string;
@@ -9,6 +11,8 @@ export type ModelRoom = {
   width: number;
   height: number;
   approximate: boolean;
+  openings: ModelOpening[];
+  detail: string;
 };
 
 export type Model = { rooms: ModelRoom[]; approximate: string[]; skipped: string[]; extent: { width: number; depth: number } };
@@ -28,8 +32,71 @@ function median(values: number[]) {
   return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
 }
 
+// Opening positions are not extracted; windows get an indicative 0.9 m sill.
+const windowSill = 0.9;
+
+function roomOpenings(roomId: string, openings: { doors?: Opening[]; windows?: Opening[] }): ModelOpening[] {
+  const convert = (kind: ModelOpening["kind"]) => (opening: Opening): ModelOpening[] => {
+    const width = toMeters(opening.width);
+    const height = toMeters(opening.height);
+    return opening.roomId === roomId && width && height ? [{ id: opening.id, kind, width, height, sill: kind === "window" ? windowSill : 0 }] : [];
+  };
+  return [...(openings.doors ?? []).flatMap(convert("door")), ...(openings.windows ?? []).flatMap(convert("window"))];
+}
+
+const describe = (measurement: Measurement | null) => (measurement ? `${measurement.value} ${measurement.unit}` : "?");
+
+function roomDetail(room: Room) {
+  const length = toMeters(room.length);
+  const width = toMeters(room.width);
+  return `${describe(room.length)} × ${describe(room.width)}${length && width ? ` · ${(length * width).toFixed(1)} m²` : ""}`;
+}
+
+export type PlacedOpening = ModelOpening & { center: number };
+export type Wall = { x1: number; z1: number; x2: number; z2: number; height: number; approximate: boolean; openings: PlacedOpening[] };
+
+// Walls are deduplicated; each room's openings go on its walls longest-first and are evenly spaced (indicative only).
+export function buildWalls(rooms: ModelRoom[]): Wall[] {
+  const walls = new Map<string, Wall & { pending: ModelOpening[] }>();
+  for (const room of rooms) {
+    const segments: [number, number, number, number][] = [
+      [room.x, room.z, room.x + room.length, room.z],
+      [room.x, room.z + room.width, room.x + room.length, room.z + room.width],
+      [room.x, room.z, room.x, room.z + room.width],
+      [room.x + room.length, room.z, room.x + room.length, room.z + room.width],
+    ];
+    const keys = segments.map((segment) => {
+      const key = segment.map((value) => value.toFixed(3)).join(":");
+      const existing = walls.get(key);
+      if (existing) {
+        existing.height = Math.max(existing.height, room.height);
+        existing.approximate &&= room.approximate;
+      } else {
+        const [x1, z1, x2, z2] = segment;
+        walls.set(key, { x1, z1, x2, z2, height: room.height, approximate: room.approximate, openings: [], pending: [] });
+      }
+      return key;
+    });
+    const byLength = [...keys].sort((left, right) => wallLength(walls.get(right)!) - wallLength(walls.get(left)!));
+    room.openings.forEach((opening, index) => walls.get(byLength[index % byLength.length])!.pending.push(opening));
+  }
+  return [...walls.values()].map(({ pending, ...wall }) => {
+    const length = wallLength(wall);
+    const slot = length / (pending.length + 1);
+    wall.openings = pending.map((opening, index) => ({
+      ...opening,
+      center: slot * (index + 1),
+      width: Math.min(opening.width, slot * 0.9),
+      height: Math.max(0, Math.min(opening.height, wall.height - opening.sill - 0.05)),
+    })).filter((opening) => opening.width > 0.05 && opening.height > 0.05);
+    return wall;
+  });
+}
+
+export const wallLength = (wall: { x1: number; z1: number; x2: number; z2: number }) => Math.hypot(wall.x2 - wall.x1, wall.z2 - wall.z1);
+
 // Footprints follow the AI-extracted drawing bounds; one scale is fitted from confirmed room areas.
-export function buildModel(rooms: Room[], drawingAspect?: number): Model {
+export function buildModel(rooms: Room[], drawingAspect?: number, openings: { doors?: Opening[]; windows?: Opening[] } = {}): Model {
   const aspect = drawingAspect && drawingAspect > 0 ? drawingAspect : 1;
   const heights = rooms.map((room) => toMeters(room.wallHeight)).filter((value): value is number => value !== null);
   const fallbackHeight = heights.length ? median(heights) : defaultWallHeight;
@@ -57,6 +124,8 @@ export function buildModel(rooms: Room[], drawingAspect?: number): Model {
       width: bounds.height * aspect * scale,
       height: toMeters(room.wallHeight) ?? fallbackHeight,
       approximate: false,
+      openings: roomOpenings(room.id, openings),
+      detail: roomDetail(room),
     };
     result.push(placed);
     maxX = Math.max(maxX, placed.x + placed.length);
@@ -79,7 +148,7 @@ export function buildModel(rooms: Room[], drawingAspect?: number): Model {
       cursorZ += rowDepth;
       rowDepth = 0;
     }
-    result.push({ id: room.id, name: room.name, x: cursorX, z: cursorZ, length, width, height: toMeters(room.wallHeight) ?? fallbackHeight, approximate: true });
+    result.push({ id: room.id, name: room.name, x: cursorX, z: cursorZ, length, width, height: toMeters(room.wallHeight) ?? fallbackHeight, approximate: true, openings: roomOpenings(room.id, openings), detail: roomDetail(room) });
     approximate.push(room.name);
     cursorX += length;
     rowDepth = Math.max(rowDepth, width);

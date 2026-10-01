@@ -34,7 +34,7 @@ export default function ProjectStep({ project, onCreated, onContinue }: { projec
         <div><dt>Created</dt><dd>{new Date(project.createdAt).toLocaleString()}</dd></div>
         {project.description && <div className="summary-grid__wide"><dt>Notes</dt><dd>{project.description}</dd></div>}
       </dl>
-      <footer className="step-footer"><span className="muted">Start a new project from the header to change these details.</span><button type="button" className="button button--primary" onClick={onContinue}>Continue to floor plan</button></footer>
+      <footer className="step-footer"><span className="muted">To change these details, create a new project from Projects.</span><button type="button" className="button button--primary" onClick={onContinue}>Continue to floor plan</button></footer>
     </section>;
   }
 

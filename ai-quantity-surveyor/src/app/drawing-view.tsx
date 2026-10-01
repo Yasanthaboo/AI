@@ -35,7 +35,7 @@ async function renderDrawing(file: File): Promise<Drawing> {
   return { url, width: image.naturalWidth, height: image.naturalHeight };
 }
 
-export default function DrawingView({ file, rooms }: { file: File; rooms: Room[] }) {
+export default function DrawingView({ file, rooms, selectedId, onSelect }: { file: File; rooms: Room[]; selectedId?: string; onSelect?: (id: string) => void }) {
   const [drawing, setDrawing] = useState<Drawing | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -61,12 +61,17 @@ export default function DrawingView({ file, rooms }: { file: File; rooms: Room[]
 
   if (failed) return <p className="empty-note">This drawing could not be displayed in the browser.</p>;
   if (!drawing) return <div className="drawing-loading"><span className="spinner" aria-hidden /> Rendering drawing…</div>;
-  return <div className="drawing-view" style={{ aspectRatio: `${drawing.width} / ${drawing.height}` }}>
+  return <div className={`drawing-view${selectedId ? " drawing-view--selecting" : ""}`} style={{ aspectRatio: `${drawing.width} / ${drawing.height}` }}>
     {/* eslint-disable-next-line @next/next/no-img-element */}
     <img src={drawing.url} alt="Uploaded floor plan" />
     <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="Room boundaries extracted from the drawing">
-      {rooms.map((room, index) => room.bounds && <rect key={room.id} x={room.bounds.x} y={room.bounds.y} width={room.bounds.width} height={room.bounds.height} style={{ fill: `${roomPalette[index % roomPalette.length]}33`, stroke: roomPalette[index % roomPalette.length] }} />)}
+      {rooms.map((room, index) => room.bounds && <rect key={room.id} data-room={room.id} className={room.id === selectedId ? "drawing-room drawing-room--selected" : "drawing-room"}
+        x={room.bounds.x} y={room.bounds.y} width={room.bounds.width} height={room.bounds.height}
+        style={{ fill: `${roomPalette[index % roomPalette.length]}${room.id === selectedId ? "66" : "33"}`, stroke: roomPalette[index % roomPalette.length], cursor: onSelect ? "pointer" : undefined }}
+        onClick={onSelect ? () => onSelect(room.id) : undefined} />)}
     </svg>
-    {rooms.map((room, index) => room.bounds && <span key={room.id} className="drawing-label" style={{ left: `${(room.bounds.x + room.bounds.width / 2) * 100}%`, top: `${(room.bounds.y + room.bounds.height / 2) * 100}%`, borderColor: roomPalette[index % roomPalette.length] }}>{room.name}</span>)}
+    {rooms.map((room, index) => room.bounds && <span key={room.id} className={room.id === selectedId ? "drawing-label drawing-label--selected" : "drawing-label"} style={{ left: `${(room.bounds.x + room.bounds.width / 2) * 100}%`, top: `${(room.bounds.y + room.bounds.height / 2) * 100}%`, borderColor: roomPalette[index % roomPalette.length] }}>
+      {onSelect ? <button type="button" className="drawing-label__button" aria-pressed={room.id === selectedId} onClick={() => onSelect(room.id)}>{room.name}</button> : room.name}
+    </span>)}
   </div>;
 }

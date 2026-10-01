@@ -86,6 +86,51 @@ func TestConvertCurrencyRejectsUnavailableRate(t *testing.T) {
 	assertFloat(t, converted, 125)
 }
 
+func TestCalculateFinishesQuantitiesWasteAndExclusions(t *testing.T) {
+	meters := func(value float64) Measurement { return Measurement{Value: value, Unit: UnitMeters} }
+	plan := ConfirmedFloorPlan{Rooms: []Room{
+		{ID: "a", Name: "Living", Length: meters(4), Width: meters(5), WallHeight: meters(2), Doors: []Opening{{Width: meters(1), Height: meters(2)}}},
+		{ID: "b", Name: "Bath", Length: meters(2), Width: meters(2), WallHeight: meters(2.5), Finish: RoomFinish{TilePercent: 60, ExcludeFlooring: true}},
+	}}
+	rates := Rates{PlasterUSDPerSquareMeter: 10, PaintUSDPerSquareMeter: 5, FlooringUSDPerSquareMeter: 20, CeilingUSDPerSquareMeter: 8, SkirtingUSDPerMeter: 3, TilingUSDPerSquareMeter: 30, WastePercent: 10}
+	result, err := Calculate(plan, rates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	living, bath := result.Rooms[0], result.Rooms[1]
+	assertFloat(t, living.Perimeter, 18)
+	assertFloat(t, living.NetWallArea, 34)
+	assertFloat(t, living.SkirtingLength, 17)
+	assertFloat(t, living.FlooringArea, 20)
+	assertFloat(t, living.CeilingArea, 20)
+	assertFloat(t, living.PlasterCostUSD, 34*1.1*10)
+	assertFloat(t, living.FlooringCostUSD, 20*1.1*20)
+	assertFloat(t, living.SkirtingCostUSD, 17*1.1*3)
+	assertFloat(t, bath.TileArea, 20*0.6)
+	assertFloat(t, bath.PaintArea, 20-12)
+	assertFloat(t, bath.NetPlasterArea, 20)
+	assertFloat(t, bath.FlooringArea, 0)
+	assertFloat(t, bath.FlooringCostUSD, 0)
+	assertFloat(t, bath.TilingCostUSD, 12*1.1*30)
+	assertFloat(t, result.GrandTotalUSD, living.TotalCostUSD+bath.TotalCostUSD)
+	assertFloat(t, result.TotalTilingQuantity, 12)
+}
+
+func TestCalculateRejectsInvalidFinishInputs(t *testing.T) {
+	meters := func(value float64) Measurement { return Measurement{Value: value, Unit: UnitMeters} }
+	plan := ConfirmedFloorPlan{Rooms: []Room{{Name: "Room", Length: meters(3), Width: meters(3), WallHeight: meters(2.4), Finish: RoomFinish{TilePercent: 120}}}}
+	if _, err := Calculate(plan, Rates{PlasterUSDPerSquareMeter: 1, PaintUSDPerSquareMeter: 1}); err == nil {
+		t.Fatal("expected tiling above 100 percent to be rejected")
+	}
+	plan.Rooms[0].Finish = RoomFinish{}
+	if _, err := Calculate(plan, Rates{PlasterUSDPerSquareMeter: 1, PaintUSDPerSquareMeter: 1, WastePercent: 60}); err == nil {
+		t.Fatal("expected waste above 50 percent to be rejected")
+	}
+	if _, err := Calculate(plan, Rates{PlasterUSDPerSquareMeter: 1, PaintUSDPerSquareMeter: 1, FlooringUSDPerSquareMeter: -1}); err == nil {
+		t.Fatal("expected negative finish rate to be rejected")
+	}
+}
+
 func assertFloat(t *testing.T, got, want float64) {
 	t.Helper()
 	if math.Abs(got-want) > 1e-9 {

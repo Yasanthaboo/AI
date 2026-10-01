@@ -20,7 +20,46 @@ func NewPostgresRepository(db *sql.DB) (*PostgresRepository, error) {
 	_, err = db.Exec(`INSERT INTO analysis_confirmations (analysis_id, revision, payload)
 		SELECT id, 1, payload FROM analysis_candidates WHERE confirmed = TRUE
 		ON CONFLICT (analysis_id, revision) DO NOTHING`)
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Exec(`ALTER TABLE analysis_confirmations ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ`)
 	return repository, err
+}
+
+func (repository *PostgresRepository) Confirmations(id string) []Confirmation {
+	rows, err := repository.db.Query(`SELECT revision, confirmed_at, payload FROM analysis_confirmations WHERE analysis_id = $1 ORDER BY revision`, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var result []Confirmation
+	for rows.Next() {
+		var snapshot Confirmation
+		var confirmedAt sql.NullTime
+		var payload []byte
+		if rows.Scan(&snapshot.Revision, &confirmedAt, &payload) != nil || json.Unmarshal(payload, &snapshot.Candidate) != nil {
+			continue
+		}
+		snapshot.AnalysisID, snapshot.ConfirmedAt = id, confirmedAt.Time
+		result = append(result, snapshot)
+	}
+	if rows.Err() != nil {
+		return nil
+	}
+	return result
+}
+
+func (repository *PostgresRepository) LatestForFloorPlan(floorPlanID string) (Candidate, bool) {
+	var payload []byte
+	if repository.db.QueryRow(`SELECT payload FROM analysis_candidates WHERE floor_plan_id = $1 AND state = 'AnalysisReady' ORDER BY payload->>'startedAt' DESC NULLS LAST LIMIT 1`, floorPlanID).Scan(&payload) != nil {
+		return Candidate{}, false
+	}
+	var candidate Candidate
+	if json.Unmarshal(payload, &candidate) != nil {
+		return Candidate{}, false
+	}
+	return candidate, true
 }
 
 func (repository *PostgresRepository) SaveConfirmation(snapshot Confirmation) error {
@@ -28,30 +67,31 @@ func (repository *PostgresRepository) SaveConfirmation(snapshot Confirmation) er
 	if err != nil {
 		return err
 	}
-	_, err = repository.db.Exec(`INSERT INTO analysis_confirmations (analysis_id, revision, payload) VALUES ($1, $2, $3)`, snapshot.AnalysisID, snapshot.Revision, payload)
+	_, err = repository.db.Exec(`INSERT INTO analysis_confirmations (analysis_id, revision, confirmed_at, payload) VALUES ($1, $2, $3, $4)`, snapshot.AnalysisID, snapshot.Revision, snapshot.ConfirmedAt, payload)
 	return err
 }
 
 func (repository *PostgresRepository) LatestConfirmation(id string) (Confirmation, bool) {
-	return repository.confirmation(id, `SELECT revision, payload FROM analysis_confirmations WHERE analysis_id = $1 ORDER BY revision DESC LIMIT 1`)
+	return repository.confirmation(id, `SELECT revision, confirmed_at, payload FROM analysis_confirmations WHERE analysis_id = $1 ORDER BY revision DESC LIMIT 1`)
 }
 
 func (repository *PostgresRepository) ConfirmationRevision(id string, revision int) (Confirmation, bool) {
-	return repository.confirmation(id, `SELECT revision, payload FROM analysis_confirmations WHERE analysis_id = $1 AND revision = $2`, revision)
+	return repository.confirmation(id, `SELECT revision, confirmed_at, payload FROM analysis_confirmations WHERE analysis_id = $1 AND revision = $2`, revision)
 }
 
 func (repository *PostgresRepository) confirmation(id, query string, args ...any) (Confirmation, bool) {
 	var revision int
+	var confirmedAt sql.NullTime
 	var payload []byte
 	values := append([]any{id}, args...)
-	if repository.db.QueryRow(query, values...).Scan(&revision, &payload) != nil {
+	if repository.db.QueryRow(query, values...).Scan(&revision, &confirmedAt, &payload) != nil {
 		return Confirmation{}, false
 	}
 	var candidate Candidate
 	if json.Unmarshal(payload, &candidate) != nil {
 		return Confirmation{}, false
 	}
-	return Confirmation{AnalysisID: id, Revision: revision, Candidate: candidate}, true
+	return Confirmation{AnalysisID: id, Revision: revision, ConfirmedAt: confirmedAt.Time, Candidate: candidate}, true
 }
 
 func (repository *PostgresRepository) Save(candidate Candidate, confirmed bool) error {

@@ -34,6 +34,27 @@ func TestOllamaAnalyzerParsesStructuredResponse(t *testing.T) {
 	}
 }
 
+func TestNormalizeConfidenceFlattensStructuredUncertainty(t *testing.T) {
+	normalized, err := normalizeConfidence(`{"analysisState":"AnalysisReady","rooms":[
+		{"id":"r1","name":"Hall","confidence":0.6,"uncertainty":{"wallHeight":"not shown","length":"blurred text"}},
+		{"id":"r2","name":"Bath","confidence":0.7,"uncertainty":["scale unclear",null]},
+		{"id":"r3","name":"Store","confidence":1,"uncertainty":null}],
+		"doors":[{"id":"d1","confidence":0.5,"uncertainty":{"reason":"partly hidden"}}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var candidate Candidate
+	if err := json.Unmarshal(normalized, &candidate); err != nil {
+		t.Fatal(err)
+	}
+	if got := candidate.Rooms[0].Uncertainty; got != "length: blurred text; wallHeight: not shown" {
+		t.Fatalf("room uncertainty = %q", got)
+	}
+	if candidate.Rooms[1].Uncertainty != "scale unclear" || candidate.Rooms[2].Uncertainty != "" || candidate.Doors[0].Uncertainty != "reason: partly hidden" {
+		t.Fatalf("unexpected uncertainties: %+v %+v", candidate.Rooms, candidate.Doors)
+	}
+}
+
 func TestNormalizeConfidenceWrapsTopLevelRoomArray(t *testing.T) {
 	normalized, err := normalizeConfidence(`[{"length":{"value":4,"unit":"m"},"width":{"value":5,"unit":"m"},"wallHeight":{"value":2.8,"unit":"m"},"confidence":{"score":1}}]`)
 	if err != nil {
