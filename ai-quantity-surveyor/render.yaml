@@ -3,8 +3,8 @@ services:
     name: ai-quantity-surveyor-api
     runtime: docker
     plan: free
-    dockerfilePath: ./Dockerfile.api
-    dockerContext: .
+    dockerfilePath: ./ai-quantity-surveyor/Dockerfile.api
+    dockerContext: ./ai-quantity-surveyor
     autoDeployTrigger: commit
     healthCheckPath: /health
     envVars:
@@ -23,8 +23,8 @@ services:
     name: ai-quantity-surveyor-web
     runtime: docker
     plan: free
-    dockerfilePath: ./Dockerfile.web
-    dockerContext: .
+    dockerfilePath: ./ai-quantity-surveyor/Dockerfile.web
+    dockerContext: ./ai-quantity-surveyor
     autoDeployTrigger: commit
     envVars:
       - key: PORT
