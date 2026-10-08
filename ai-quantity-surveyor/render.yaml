@@ -18,6 +18,12 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
+      - key: OLLAMA_ENDPOINT
+        sync: false
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: OLLAMA_MODEL
+        value: llama3.2-vision
 
   - type: web
     name: ai-quantity-surveyor-web
