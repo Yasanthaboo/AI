@@ -1,4 +1,4 @@
-export const API = "http://localhost:8080";
+export const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").replace(/\/$/, "");
 
 export type Measurement = { value: number; unit: string };
 export type Bounds = { x: number; y: number; width: number; height: number };

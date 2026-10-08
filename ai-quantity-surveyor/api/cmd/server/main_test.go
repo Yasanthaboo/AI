@@ -76,6 +76,18 @@ func TestConfirmationReadHandlers(t *testing.T) {
 	}
 }
 
+func TestCORSUsesConfiguredOrigin(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGIN", "https://demo.example.com")
+	handler := withCORS(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "https://demo.example.com" {
+		t.Fatalf("allowed origin = %q", got)
+	}
+}
+
 func TestPortfolioHandlers(t *testing.T) {
 	store := project.NewService()
 	analyses := analysis.NewService(analysis.DemoAnalyzer{})

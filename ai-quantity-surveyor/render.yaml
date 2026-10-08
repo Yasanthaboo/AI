@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: ai-quantity-surveyor-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.api
+    dockerContext: .
+    autoDeployTrigger: commit
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DATABASE_URL
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+
+  - type: web
+    name: ai-quantity-surveyor-web
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.web
+    dockerContext: .
+    autoDeployTrigger: commit
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: ai-quantity-surveyor-api
+          envVarKey: RENDER_EXTERNAL_URL

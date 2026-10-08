@@ -215,8 +215,12 @@ func main() {
 }
 
 func withCORS(next http.Handler) http.Handler {
+	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:3001"
+	}
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:3001")
+		writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS")
 		if request.Method == http.MethodOptions {
