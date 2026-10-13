@@ -16,6 +16,11 @@ An AI-assisted quantity surveying MVP for residential house floor plans.
 - `.specify/memory/constitution.md` is the governing project constitution.
 - `specs/001-ai-quantity-surveyor/` contains the specification, implementation plan, and initial tasks.
 - `specs/004-project-workspace-and-finishes/` covers the projects dashboard, overview, finishes estimating, settings, and model tools; `tasks.md` traces each requirement to code and tests.
+- `specs/005-next-demo-recognition-and-material-prices/` proposes the next demo: improved windows/stairs/balconies review, a paint/tiles material budget, and sourced local-price comparisons. It contains `spec.md`, `plan.md`, `contracts.md`, `tasks.md`, and `checklists/requirements.md`. This scope is proposed, not implemented; live supplier collection requires region/source approval and a constitution amendment.
+
+## Next Demo
+
+Deliver recognition quality and source-drawing evidence first, then deterministic paint/tile requirements, then an allowlisted local-price pilot. Preserve human confirmation and existing estimate/export results. RAG and multi-agent orchestration are deferred until measured evaluation shows a need. Hosted Render/Neon deployment was reported successful during the first demo follow-up; access protection, regression verification, price freshness, and reproducible saved comparisons remain release gates. Use sample drawings until both web and API are protected.
 
 The current Next.js scaffold is at the repository root so it can run immediately. The Go API starts with `go run ./api/cmd/server` from the repository root after changing into `api`, or with `go run ./cmd/server` from `api`.
 

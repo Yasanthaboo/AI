@@ -48,3 +48,17 @@
 ## Definition of Done
 
 A feature is complete when its behavior, validation, error handling, focused tests, and documentation are implemented without unrelated scope expansion.
+
+## Proposed Next-Demo Amendment (1.5.0)
+
+**Status:** Proposed on 2026-10-13; not ratified and not implemented. Version 1.4.0 remains the approved baseline. See `specs/005-next-demo-recognition-and-material-prices/` for specification, plan, contracts, tasks, and approval gates.
+
+- Prioritize improved window recognition and evidence-backed identification/review of stairs and balconies. Stairs and balconies are informational features only in this phase: no structural quantities, external finishes, or multi-floor reconstruction.
+- Propose a limited interior-finish material budget and local supplier-price comparison pilot. Start with paint and tiles; choose one region and two or three permitted sources before live collection. Cement, sand, plaster recipes, structural materials, and full BOQ remain deferred pending approved consumption rules.
+- Material quantities and pack rounding must be deterministic Go calculations from frozen confirmed finish quantities and user-approved product specifications. Material budgets stay separate from existing finish-rate estimates; never add both costs together automatically.
+- Supplier catalogs are external evidence, not verified quotations. Require source URLs, branch/location, currency, product/pack units, observation time, availability when known, and explicit tax/delivery coverage. Missing charges remain unknown, not zero.
+- Prefer authorized feeds/APIs or maintained price lists. Scraping requires a per-source permission/terms/robots review, bounded collection and caching; never bypass authentication, CAPTCHAs, or other access controls.
+- Manual location selection is primary; browser geolocation is optional with consent. Protect both web and API before using confidential drawings or location data; sample-only hosted demos remain the fallback.
+- RAG, autonomous agents, LangGraph, MCP, purchases, supplier administration, new structural trades, multi-floor workflows, and construction-ready models remain deferred. No AI-derived price or model geometry becomes a calculation input without the specified review boundary.
+
+Ratification must explicitly amend principles 1, 2, 5, 7, 8, and 12 for these bounded extensions, keep principle 13's estimated-visualization warning, and synchronize development instructions. The proposal alone does not override current exclusions.
