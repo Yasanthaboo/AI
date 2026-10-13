@@ -2,6 +2,12 @@ export const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").
 
 export type Measurement = { value: number; unit: string };
 export type Bounds = { x: number; y: number; width: number; height: number };
+export type AnalysisSource = { floorPlanId: string; pageNumber: number; selectionMode: "explicit" | "legacy-default" | "image"; imageDigest: string; pixelWidth: number; pixelHeight: number };
+export type Evidence = { analysisId: string; floorPlanId: string; pageNumber: number; region?: Bounds | null; observedText?: string; confidence?: number | null; uncertainty?: string; origin: "engine" | "manual" };
+export type ArchitecturalFeature = { id: string; type: "stair" | "balcony"; label: string; roomId?: string; evidence?: Evidence | null; confidence?: number | null; uncertainty?: string; origin?: "engine" | "manual"; disposition: "pending" | "acknowledged" | "removed" };
+export type ReviewIssue = { entityId: string; field?: string; code: string; message: string; blocking: boolean };
+export type Correction = { entityId: string; field: string; originalValue: unknown; confirmedValue: unknown; origin: "user" | "configured-default" };
+export type AnalysisError = { errorCode: string; message: string; retryable: boolean; retryAt?: string };
 export type Room = {
   id: string;
   name: string;
@@ -12,8 +18,9 @@ export type Room = {
   confidence?: number;
   uncertainty?: string;
   assumptions?: string[];
+  evidence?: Record<string, Evidence>;
 };
-export type Opening = { id: string; roomId?: string; width: Measurement | null; height: Measurement | null; confidence?: number; uncertainty?: string };
+export type Opening = { id: string; roomId?: string; width: Measurement | null; height: Measurement | null; confidence?: number; uncertainty?: string; evidence?: Record<string, Evidence> };
 export type Candidate = {
   id?: string;
   floorPlanId?: string;
@@ -28,6 +35,11 @@ export type Candidate = {
   windows?: Opening[];
   errorMessage?: string;
   confirmationRevision?: number;
+  source?: AnalysisSource;
+  features?: ArchitecturalFeature[];
+  reviewIssues?: ReviewIssue[];
+  corrections?: Correction[];
+  error?: AnalysisError;
 };
 export type Confirmation = { analysisId: string; revision: number; confirmedAt?: string; candidate: Candidate & { rooms: Room[] } };
 export type Project = { id: string; name: string; client?: string; location?: string; description?: string; createdAt: string; status: string; archived?: boolean };
@@ -85,6 +97,10 @@ export type EstimateVersion = {
   projectId: string;
   version: number;
   sourceAnalysisId: string;
+  sourceConfirmationRevision?: number;
+  sourceFloorPlanId?: string;
+  sourcePageNumber?: number;
+  sourceImageDigest?: string;
   targetCurrency: string;
   exchangeRate: number;
   exchangeRateFetchedAt: string;

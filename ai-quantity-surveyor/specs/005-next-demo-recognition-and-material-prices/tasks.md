@@ -1,61 +1,134 @@
 # Tasks: Next-Demo Recognition and Local Material Prices
 
-**Status:** Proposed. All implementation/release tasks are unchecked. Spec 004 completion does not imply completion here.
-**Dependencies:** Governance -> P1 recognition -> P2 material budgeting -> gated P3 live prices -> release. P1 can be demoed independently; P2/P3 may use labeled curated fixtures.
+**Status:** Implementation started 2026-10-13 after passing cross-artifact analysis. T001, T002, T006, T007, T020 and T045 are complete for their bounded slices. Customer-facing feature integration, accuracy evaluation, source/private-data approvals and release remain pending.
+**Inputs:** `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts.md`, `quickstart.md`; constitution 1.5.0.
+**Paths:** Relative to app root `ai-quantity-surveyor/`, not Git root. New files are planned, not already present.
 
-## Phase 1 - Approval and Baseline
+Path shorthand: `analysis/`, `estimate/`, `domain/` and `materials/` refer to the corresponding `api/internal/` package. `main.go`/`main_test.go` refer to `api/cmd/server/`; frontend bare filenames refer to `src/app/`. A bare companion filename uses the preceding package/component directory. Bare planning artifact names refer to this feature folder. Full paths such as `api/cmd/catalog-import/main.go`, `Dockerfile.api` and `e2e/quantity-surveyor.spec.ts` are already app-relative.
 
-- [ ] T001 Ratify bounded constitution 1.5.0 and synchronize developer instructions; preserve excluded trades/frameworks and approve only lookup/comparison, not procurement. Owner approval required.
-- [ ] T002 Finalize `contracts.md` schemas, reference/revision rules, source confidence and candidate/confirmation validation boundaries. **FR-001-007, FR-009-013**
-- [ ] T003 Select consented/redistributable annotated plan fixtures; record current engine/model/prompt baseline and agree holdout precision/recall/dimension targets before tuning. **FR-001-005; AC-01-03, AC-10**
-- [ ] T004 Choose pilot country/city/currency, paint/tile specs, freshness interval, and two or three candidate suppliers; document permission/terms/robots and approved collection method per source. Live integration blocked until approved. **FR-008-012; AC-06-08**
-- [ ] T005 Choose web/API access boundary, sample-only fallback, provider-call limits, free-hosting quotas, secret rotation and deployment branch/check policy. **FR-014; AC-09**
+## Task Conventions
 
-## Phase 2 - Recognition and Review (P1)
+`[USn]` maps to a spec story; `[P]` means file-independent work can proceed after prerequisites, not permission to spawn agents. Existing task IDs are preserved; added IDs split large slices without renumbering references. Each task states files, dependencies and focused verification. Execute by dependencies, not numeric ID order.
 
-- [ ] T010 Extend analysis candidate/evidence/feature types additively and provider prompts/schemas in `api/internal/analysis`; preserve missing values and original candidates. **FR-001-002; AC-01-02**
-- [ ] T011 Validate IDs/types, finite confidence, page/region coordinates, room associations and source provenance; keep incomplete candidates reviewable and strict window confirmation. **FR-002-004; AC-02**
-- [ ] T012 Persist immutable reviewed feature/evidence revisions, manual corrections/dispositions and legacy payload compatibility; extend API types in `src/app/api.ts`. **FR-002-004; AC-03, AC-05**
-- [ ] T013 Add window/stair/balcony list and source-overlay selection/edit/add/remove to existing review/drawing views; uncertainty and manual status stay visible. **FR-003; AC-01-03**
-- [ ] T014 Add evidence-linked informational model annotations/text fallback; no invented stair geometry, verified wall anchors or independent layout confirmation. **FR-005; AC-01, AC-03, AC-05**
-- [ ] T015 Run holdout extraction evaluation, provider parsing/API tests, legacy workflow regressions, desktop/mobile review screenshots and golden QS/export comparisons; record results versus baseline. **FR-001-005; AC-01-03, AC-05, AC-10**
+Run a focused check immediately after each substantive edit; repair that slice before widening scope. Mark complete only after implementation and relevant evidence exist. No commits, pushes, branch changes or credential collection are authorized by this list.
 
-## Phase 3 - Finish Material Budget (P2)
+## Phase 1 - Readiness and External Gates
 
-- [ ] T020 Add deterministic paint/tiles recipe validation, exclusions, quantity conversion, single waste application, compatible aggregation, whole-pack rounding and surplus tests. **FR-006-007; AC-04**
-- [ ] T021 Add exact source-confirmation/estimate provenance and frozen quantity inputs for material budgets; reject unresolved legacy provenance instead of selecting latest revision silently. **FR-007; AC-05**
-- [ ] T022 Add additive budget persistence/read/create APIs and immutability/restart tests, without changing existing finish totals/exports. **FR-007; AC-05**
-- [ ] T023 Extend estimate workspace with reviewed product specs, separate material-only budget, assumptions and missing-yield errors using curated sourced/fixture inputs. **FR-006-007; AC-04-05**
+- [x] T001 Ratify constitution 1.5.0 and synchronize `.github/copilot-instructions.md`. Owner approved P1-P3 on 2026-10-13; lookup/comparison only, not procurement. Evidence: `.specify/memory/constitution.md`.
+- [x] T002 Record passed cross-artifact analysis and bounded request/catalog limits in `contracts.md`: A1-A6 and async semantics resolved at design level, 55 unique tasks/26 requirement-acceptance IDs traced, no cycles or undefined dependencies. Live-source, private access and measured holdout gates remain pending. Depends: T001. **FR-001-015**
+- [ ] T003 [US1] [US2] Acquire/freeze consented holdout fixtures and raw per-provider/model baseline BEFORE tuning, with versioned manifest/report in `api/internal/analysis/testdata/recognition/`. Freeze identity/association matching, support status and page/input representation. Check: >=10 pages/>=20 instances per feature, no tuning overlap, separate detection/dimension/localization baselines, unsupported legacy location explicitly marked and no human corrections in raw scores. Depends: T002, T046. **FR-001-005; AC-01-03, AC-10**
+- [ ] T004 [US4] Approve two or three real suppliers, source access policies, equivalence/freshness/refresh rules for Colombo/LKR. File: source approval record in `research.md`. Check: dated permission/terms/robots and allowed collection method per source. External approval, deferred; blocks live tasks only. Depends: T002. **FR-008-012; AC-06-08**
+- [ ] T005 [US5] Document sample-only restrictions, provider-call budget, deploy/check policy and credential rotation procedure in `README.md`, `render.yaml` and `quickstart.md`. Choose/approve managed access before confidential use; approval may remain deferred under sample-only release. Check: proposed private boundary covers web AND all API/drawing/export/provider routes, no secrets in records. Depends: T002. **FR-014; AC-09**
 
-## Phase 4 - Approved Price Pilot (P3; Requires T004/T005)
+## Phase 2 - Shared Recognition Foundation
 
-- [ ] T030 Implement allowlisted authorized source adapters and recorded fixtures; structured parsers, redirects/SSRF controls, response bounds, request limits and no bypasses. **FR-009, FR-011; AC-07**
-- [ ] T031 Persist observations/cache and refresh status; operator-only bounded refresh, failure handling, provenance/freshness and restart behavior. **FR-009, FR-011-012; AC-07**
-- [ ] T032 Implement manual location and optional consented geolocation fallback, branch/product filtering and delivery coverage states. **FR-008-009; AC-06**
-- [ ] T033 Normalize equivalent pack/spec offers, validate optional currency conversion, compute whole-pack totals and basket-level known charges, exclude incomparable offers from ranking. **FR-010; AC-06, AC-08**
-- [ ] T034 Add UI comparison options with source, time, availability and tax/delivery unknowns; reviewed budget/standard/premium grouping only. **FR-009-012; AC-06-08**
-- [ ] T035 Persist immutable selected comparisons and separate export; prove later catalog refresh cannot change saved values. **FR-013; AC-05, AC-08**
+- [x] T006 Add optional Go/TypeScript source/evidence/feature/issue/correction/error contracts and non-serializable job controls. Evidence: legacy/new/failure JSON round-trip and internal-control tests pass; TypeScript and touched-file lint pass. Manual origin and unknown confidence remain distinct. Depends: T002. **FR-001-004, FR-014-015; AC-02-03, AC-09, AC-11**
+- [x] T045 [P] Package Poppler in `Dockerfile.api`; image build and non-root pdfinfo/pdftoppm execution pass. Alpine package 24.02.0-r2 / GPL-2.0-or-later and redistribution/host notes recorded in `quickstart.md`. Existing export dependency version is preserved. Depends: T002. **FR-002; AC-03**
+- [x] T007 [P] Implement `analysis/page.go`/`page_test.go`: metadata, canonical PNG/digest, fixed commands/deadlines, input/output/decode limits and cleanup. Unit checks pass for selection/errors/encryption/size/cancellation. Real non-root Poppler test under 512 MB produces selected rotated/cropped page 2 as 3000x2000 PNG. Helper is not yet wired to public routes. Depends: T006, T045. **FR-002; AC-03**
+- [ ] T008 [P] Persist/read immutable source images and internal job-control columns/claim/conditional-write helpers in `analysis/service.go`/`postgres.go`; add `analysis_source_images` and nullable legacy-compatible owner/attempt/lease/heartbeat fields. Check: digest/page survive restart, unique owned claim, database-time expiry, conditional publication, no cross-analysis overwrite and DB failure cannot publish prepared state. These helpers precede quota/orchestration integration. Depends: T006. **FR-002-003, FR-014; AC-03, AC-05, AC-09**
+- [ ] T011 Separate incomplete candidate validation from strict confirmation in `analysis/contract.go`/`service.go`; extend existing tests. Check: duplicate IDs, finite confidence, types/page/regions/associations, nullable measurements and named excluded optional evidence; strict numeric confirmation still blocks invalid deductions. Depends: T006. **FR-002-004; AC-02**
+- [ ] T044 Implement preparation/provider orchestration in `analysis/service.go`/`postgres.go`: one renderer/two provider calls, unique owner/attempt token, 60s lease/15s DB heartbeats and conditional writes. After 202, persist named structured `AnalysisFailed`/retryAt errors for render/quota/provider failures; never send a second HTTP error or dispatch after rejected reservation. Check: overlap/expiry/stale writes, accepted-job quota race, failed DB terminal write/cancel and subsequent expired recovery, no provider calls on rejection and unchanged confirmed data. Depends: T007, T008, T011, T055. **FR-002, FR-014; AC-03, AC-09**
+- [ ] T055 Implement daily quota/reservations in planned `analysis/quota.go`/`postgres.go` and neighboring tests; add nonsecret scope/provider limits. Atomically reserve with live-owner check before each attempt/retry; missing/zero config or DB failure disables dispatch. Check: concurrency/idempotency/crash/restart/UTC rollover, immediate pre-acceptance 429/Retry-After or 503, post-202 structured failure/reset metadata rather than rewriting POST, and zero rejected provider calls. Depends: T006, T008. **FR-014; AC-09**
+- [ ] T009 Add page/source-image routes, page preflight and explicit HTTP acceptance boundary in `main.go`/`main_test.go`. Check: 202 only after owned persistence, immediate 400/404/429/503 errors, post-202 failed job read as HTTP 200 with structured retry/reset and legacy errorMessage, status-store 503, page origin/digest/cache and no reservation-failed provider invocation. Depends: T044. **FR-002, FR-014; AC-03, AC-09**
+- [ ] T046 [P] Add opt-in raw-output evaluator in planned `analysis/evaluation_test.go` with independent detection/dimension/localization reports and frozen manifest rules. Check: a correctly identified window without bounds can pass detection while new localization fails/legacy localization is notSupported; one-to-one IoU >=0.5, duplicate/unmatched/ambiguous cases counted, legible entity/unit/<=2% dimension checks and human-edited reports excluded. Unit tests never call live providers. Depends: T002. **FR-001-005; AC-10**
 
-## Phase 5 - Demo Verification and Release
+## Phase 3 - Recognition, Evidence and Dimension Review (P1)
 
-- [ ] T040 Run focused Go domain/provider/API/persistence tests; frontend typecheck/lint and existing/new Playwright workflows. **AC-01-10**
-- [ ] T041 Verify deployed web/API URLs, CORS, provider configuration, PostgreSQL restart persistence, source-policy enforcement, bounded provider/collector calls, access protection or explicit sample-only restrictions, desktop/mobile usability and cold-start/error recovery. **FR-014; AC-09**
-- [ ] T042 Perform approved live supplier smoke checks if permitted; otherwise clearly label fixture/imported prices and remove live/current-price claims. **FR-009-012; AC-06-08**
-- [ ] T043 Record demo acceptance/evaluation results, known limits and unresolved gates; update README/spec status only after verification. **AC-01-10**
+**Independent proof:** Select a PDF page, correct extracted features/dimensions against its image, explicitly confirm a new revision and preserve old estimates. Informational geometry and renderer failures do not block ordinary numeric estimates.
 
-## Traceability
+- [ ] T010 [US1] [US2] Extend `analysis/gemini.go`, `ollama.go` and shared prompt/schema in `contract.go`, using prepared PNG and optional field evidence/features; extend existing provider tests. Check: missing values remain uncertain, original page rebound, no quantities/prices/default assumptions invented. Tune only after frozen baseline. Depends: T003, T044. **FR-001-002; AC-01-03, AC-10**
+- [ ] T012 [US2] Preserve stored source/engine evidence and derive user/default correction records in `analysis/service.go`/`postgres.go`; extend service/API tests and TS confirmation types. Check: originals retained, tampering rejected, manual marks tagged/validated, DB insert precedes response and legacy reads work. Depends: T008, T011. **FR-002-004; AC-02-03, AC-05, AC-11**
+- [ ] T016 [US1] Add explicit PDF selection in `step-upload.tsx`, start/poll helpers/types in `api.ts` and re-analysis wiring in `analysis-details.tsx`/`page.tsx`. Check: selection/page metadata errors, new ID on changed page, no stale preview, immediate HTTP failure vs HTTP 200 AnalysisFailed with structured retry/reset and legacy fallback, saved inputs retained and no polling beyond failed state. Depends: T009. **FR-002, FR-014; AC-03, AC-09**
+- [ ] T017 [US6] Separate original/pending/confirmed review state in `step-review.tsx`/`page.tsx`; confirmation response alone updates revision, recalculation stays separate. Check: edit/cancel/failed confirmation preserve originals/old snapshots; valid confirmation retains assumptions/source. Depends: T006, T012, T016. **FR-003-004, FR-015; AC-03, AC-11**
+- [ ] T018 [US1] [US2] Add canonical-image/evidence overlays, linked room/opening/field selection, bounded zoom/pan and list/error fallback to `drawing-view.tsx`. Check: page/digest mismatch, missing region, rotation and zoom never fabricate/alter measurements; stable browser layout. Depends: T009, T016. **FR-002-003, FR-015; AC-01-03, AC-11**
+- [ ] T013 [US6] Integrate editable dimension panel and feature add/edit/remove in `step-review.tsx`/`drawing-view.tsx` with scoped `globals.css`. Show original/pending/confirmed values, units/metre equivalents, defaults and uncertainty. Check: explicit validation, opening association, no pixel-derived data, desktop/mobile and list-only review. Depends: T017, T018. **FR-003-004, FR-015; AC-01-03, AC-11**
+- [ ] T014 [US1] Extend `step-model.tsx`, `preview.ts`/`room-scene.tsx` with informational annotations/text only. Check: no invented stair elevation/rise/run or verified window anchors, indicative labels retained and calculation conversion unchanged. Depends: T012, T018. **FR-005; AC-01, AC-03, AC-05**
+- [ ] T019 [US1] [US2] [US6] Extend `e2e/quantity-surveyor.spec.ts` using existing helpers with page correction/confirmation, pending dimensions, renderer fallback and desktop/mobile checks. Check: stale revision prevented, preview-only/feature changes have zero old estimate/export differences. Depends: T010, T013, T014. **FR-001-005, FR-015; AC-01-03, AC-05, AC-11**
+- [ ] T015 [US1] [US2] Run raw-output holdout evaluation with separate detection/dimensions/localization reports under T003 fixtures; human correction tests remain separate. Check: new detection/localization windows precision/recall >=90%, stairs/balconies >=85%, >=95% legible dimensions correct unit/<=2% error; fewer raw window detection misses/no worse room-dimension accuracy only on jointly supported baseline metrics. Unsupported baseline location is disclosed, not fabricated; missing fixtures/provider failures never pass. Depends: T003, T010, T019. **FR-001-005; AC-10**
+
+## Phase 4 - Deterministic Material Budgets (P2)
+
+**Independent proof:** Reviewed specs and a traceable confirmed estimate produce a separate paint/tile budget with exact packs/surplus. No supplier network needed. Pure formula/provenance tasks may proceed alongside P1 after readiness.
+
+- [x] T020 [P] [US3] Implement isolated `domain/materials.go`/`materials_test.go` with exact rational formulas, six-decimal normalization, post-normalization guards, single waste, unique allocations and recipe-based cross-room grouping. Tests pass for both AC-04 examples, precision/pack boundaries, excludes, duplicate/incompatible allocations and invalid waste/units. No material API/UI is exposed yet; QS formulas remain unchanged. Depends: T002. **FR-006-007; AC-04**
+- [ ] T021 [P] [US3] Capture exact confirmation provenance at estimate creation in `estimate/service.go`, additive fields and ownership checks; extend existing tests. Check: concurrent reconfirmation cannot mislabel inputs, foreign project/analysis rejected, legacy exports unchanged and no guessed backfill. Depends: T002. **FR-007; AC-05**
+- [ ] T024 [US3] Add budget application interfaces, memory/transactional PostgreSQL repositories in planned `materials/service.go`/`postgres.go` with adjacent tests. Check: additive `material_budget_versions`, ownership, unique concurrent versions, rollback/no partial publish and copied frozen inputs. Depends: T020, T021. **FR-007; AC-05**
+- [ ] T022 [US3] Implement budget-create/read/list using frozen server estimate quantities in materials service/tests. Validate unique `(roomId, trade)` before aggregation/persistence; split-area/multiple-product allocations within one room/trade remain unsupported. Check: duplicate same/different recipe/group returns `DuplicateMaterialAllocation` with no version, compatible distinct rooms aggregate correctly, client areas/totals ignored, foreign references and unresolved legacy provenance rejected. Depends: T024. **FR-006-007; AC-04-05**
+- [ ] T025 [US3] Add budget routes/common errors/body bounds in `main.go`/`main_test.go`. Check: 201/read/list, invalid/duplicate allocation 400 with named room/trade, no partial version, missing 404, provenance 409 and old estimate parity. Depends: T022. **FR-006-007; AC-04-05**
+- [ ] T026 [US3] Add recipe/requirement/budget types and requests in `src/app/api.ts`. Check: typecheck and mocked success/legacy/provenance-error payloads match contracts. Depends: T025. **FR-006-007; AC-04-05**
+- [ ] T027 [US3] Add reviewed coverage/coats/pack/waste/tile allocation controls in planned `src/app/material-budget.tsx`, integrated into `step-estimate.tsx`. Check: no automatic tile assignment/repeated waste, explicit incomplete inputs, separate totals, requirements/packs/surplus and mobile layout. Depends: T026. **FR-006-007; AC-04**
+- [ ] T023 [US3] Complete budget version/restoration/assumptions presentation in `material-budget.tsx`/`step-estimate.tsx`; extend existing E2E. Check: identical inputs reproduce values, changed recipe creates new budget and old QS totals remain unchanged. Depends: T027. **FR-006-007; AC-04-05**
+- [ ] T028 [US3] Add PostgreSQL restart/concurrency/rollback cases to adjacent materials tests using repository setup conventions. Check: exact revision/result survives restart, version collisions prevented and unsaved budgets never published. Depends: T024, T022. **FR-007; AC-05**
+
+## Phase 5 - Colombo/LKR Fixture Comparisons (P3)
+
+**Independent proof:** Operator-loaded fictional fixtures or authorized imports produce equivalent offers with transparent incomplete totals and immutable export. No T004/live-source dependency. Initial release is sample-only under T005.
+
+- [ ] T029 [US4] Define products/observations/refresh/comparison types/equivalence groups in materials service and planned `materials/testdata/colombo-catalog.json`. Check: paint/tile use/spec/pack distinctions, fictional source labels, nullable charge/stock, LK/Colombo/LKR and no fabricated real quotation URL. Depends: T002. **FR-008-010, FR-012; AC-06-08**
+- [ ] T030 [US4] Implement strict structured fixture/import validation in planned `materials/catalog.go` and adjacent tests, no network collector. Validate coverage/pack inputs before AND after material normalization. Check: finite positive values, zero-normalized divisors rejected with named fields, currencies/specs/times, unknown charges and fixture origin; real imports require approved provenance. Depends: T029, T020. **FR-006, FR-009, FR-011-012; AC-04, AC-07**
+- [ ] T031 [US4] Persist products/append-only observations/separate attempt status in materials repository; add planned `api/cmd/catalog-import/main.go` operator command. Check: bounded atomic import, invalid input retains old timestamps, no public refresh endpoint or secrets logged. Depends: T030, T024. **FR-009, FR-011-012; AC-07**
+- [ ] T048 [US4] Add cached product/offer filters and read-time freshness in `materials/catalog.go`/service tests; default 24h pilot policy. Check: no page-load refresh, explicit stale/quote-only/unavailable states, synthetic fixtures stay synthetic and foreign currencies separated without reviewed conversion. Depends: T031. **FR-008-012; AC-06-08**
+- [ ] T033 [US4] Add equivalent-offer pricing and branch-basket charges in planned `domain/material_prices.go`/adjacent tests. Check: offer-specific packs/coverage, exact rounding, manual FX metadata, one delivery per basket, incompatible specs rejected and unknown charges give null delivered total. Depends: T020, T029. **FR-010; AC-06, AC-08**
+- [ ] T035 [US4] Add comparison create/read persistence to materials service/repository; copy selected observation/spec/quantity/charge/conversion data and transactional versions. Check: server recomputes, IDs/ownership/equivalence valid, new prices/selections cannot rewrite old snapshots and failed inserts do not publish. Depends: T022, T031, T033. **FR-013; AC-05, AC-08**
+- [ ] T049 [US4] Add a non-persisting budget comparison-preview service using the same pricing function as Save in `materials/service.go`; load frozen quantities/observation IDs and return alternative baskets with packs/subtotal/known charges/null delivered total/warnings. Check: no inserts/version allocation/provider or supplier calls, read-consistent inputs, post-normalization validation and explicit Save recalculation/expired-selection rejection. Depends: T022, T031, T033. **FR-010, FR-013; AC-06, AC-08**
+- [ ] T036 [US4] Add cached products/offers and comparison-preview/save/read routes with bounded filter/pagination and preview alternatives in `main.go`/`main_test.go`. Check: preview 200 without writes, explicit save 201/recomputation, expired-selection 409, contract/errors/nullable totals, ownership and no arbitrary URL inputs. Depends: T048, T035, T049. **FR-008-013; AC-06-08**
+- [ ] T032 [US4] Add manual Colombo/postcode selection in planned `src/app/material-prices.tsx` and `api.ts` types; optional geolocation only prefills reviewed location with consent/manual fallback. Check: denied permission, no precise-location persistence and no inferred delivery coverage. Depends: T036. **FR-008-009; AC-06**
+- [ ] T034 [US4] Add server-backed alternative preview and explicit Save to `material-prices.tsx` beside budgets in `step-estimate.tsx`, with source/time/spec/packs/known charges and warnings. Refresh preview when inputs change; never persist on preview/view or submit authoritative client totals. Check: renewed review on expired selections, no cheapest delivered ranking of incomplete/stale offers and no live fixture/unreviewed quality claims. Depends: T032. **FR-009-013; AC-06-08**
+- [ ] T037 [US4] Add separate Excelize export in planned `materials/export.go` and route tests: Requirements/Offers/Sources/Assumptions. Check: saved values match, unknowns remain unknown, source strings cannot execute spreadsheet formulas and existing QS workbook unchanged. Depends: T035, T036. **FR-013; AC-05, AC-08**
+- [ ] T038 [US4] Add restart/concurrency/rollback/newer-price cases to adjacent materials repository tests. Check: comparison immutable after refresh, null statuses preserved and copied selections survive catalog changes. Depends: T035, T037. **FR-012-013; AC-05, AC-07-08**
+- [ ] T039 [US4] Extend existing E2E with fixture labels, selection/export, stale/out-of-stock/quote-only, unknown delivery, equivalence, currency and geolocation-denied cases. Check: desktop/mobile readability, no display-triggered network collection and saved selections unchanged after newer observation. Depends: T034, T037, T038. **FR-008-013; AC-06-08**
+
+## Phase 6 - Hosted Verification and Release
+
+- [ ] T040 [US5] Run Go tests/vet, TypeScript/lint and existing/new Playwright gates from `quickstart.md` against disposable PostgreSQL. Check: all released AC results, zero legacy QS/export regression and no customer DB used for tests. Depends: T015, T019, T028, T039. **AC-01-11**
+- [ ] T047 [US5] Benchmark Render-equivalent 512 MB preparation/provider load, size/time/concurrency, lease recovery and cold starts. Record in `quickstart.md`/release evidence. Check: overlapping live owner not reclaimed, stale writes fenced, quota preserved across restart/midnight, and no runaway subprocess/provider invocation after rejection. Depends: T044, T045, T055. **FR-002, FR-014; AC-03, AC-09**
+- [ ] T041 [US5] Verify hosted sample configuration/persistence and desktop/mobile screenshots; evidence in `README.md`, `render.yaml` and feature checklist. Check: web/API URL/origin, providers, Neon restart, secrets, bounded calls and explicit sample-only restrictions. Depends: T005, T040, T047. **FR-014; AC-09, AC-11**
+- [ ] T042 [US4] Verify fixture/import labels and disabled live-source paths; demonstrate incomplete coverage honestly. Record in checklist using E2E results. Check: every displayed offer has truthful fixture/import provenance, live collection stays disabled and missing coverage is not invented. No supplier approval is needed for fictional fixtures; live smoke belongs to T053. Depends: T039. **FR-009-012; AC-06-08**
+- [ ] T043 [US5] Record actual acceptance/accuracy evidence, limits/gates and delivered statuses in `README.md`, `spec.md` and checklist. Check: no fixture/live/verified-layout marketing mismatch or unapproved private-data release. Depends: T040, T041, T042. **AC-01-11**
+
+## Deferred Extensions - Not Fixture Demo Dependencies
+
+- [ ] T050 [US4] Define approved real-source normalization, URL/redirect allowlists, fetch bounds and permitted refresh policy in `contracts.md`/`research.md`. Check: source signoff, no arbitrary customer URLs and approved parser/package. External gate. Depends: T004. **FR-009, FR-011; AC-07**
+- [ ] T051 [US4] Implement only permitted real API/feed/HTML adapters in planned `materials/sources.go` with recorded permitted fixtures. Check: SSRF/private/link-local/redirect prevention, response/time/retry bounds, no login/CAPTCHA bypass and no live sites in automated tests. Depends: T050. **FR-009, FR-011; AC-07**
+- [ ] T052 [US4] Add authorized bounded operator refresh to importer/service; preserve observations and separate attempt status. Check: revoked sources stop, failures keep old observation times, no always-running container timer/browser refresh. Depends: T051, T031. **FR-011-012; AC-07**
+- [ ] T053 [US4] Run approved live smoke with observed branch/stock/tax/delivery/freshness evidence in checklist/source report; otherwise leave live slice disabled. Check: permitted source matches actual offer and fixtures remain labeled. Depends: T052, T004. **FR-009-013; AC-06-08**
+- [ ] T054 [US5] After owner approval in T005, configure/test a managed boundary for web AND every API/drawing/export/provider route, not an application users/roles system. Record deployment/security evidence in `README.md`/checklist. Check: direct unauthenticated API access denied and location consent/retention approved. Required for confidential release, not sample-only T043. Depends: T005. **FR-014; AC-09**
+
+## Execution and Parallel Opportunities
+
+- Next shared-foundation task: T008 source/job persistence, followed by T055 quota and T044 orchestration before public route/UI wiring. T011/T012/T021 have partial safeguards/provenance changes but remain unchecked until all scoped checks are delivered. Provider prompt tuning waits for T003's consented frozen baseline; synthetic PDF rendering tests do not satisfy that gate.
+- Shared foundation: T006/T045 -> T007/T008/T011; T006/T008 -> T055; preparation/storage/validation/quota -> T044 -> T009. P1 UI follows T016 -> T017/T018 -> T013/T014 -> T019/T015, with T012 before T017 and T010 before T019.
+- `[P]` candidates T045/T046, T007/T008 and T020/T021 have distinct edit surfaces; satisfy listed dependencies and coordinate any shared test/artifact changes. No parallelism is required.
+- P2 can proceed alongside P1 after T002; T020/T021 -> T024 -> budget routes/UI/restart checks. P3 fixture types may also start after T002, but persist/import/compare after the listed material dependencies.
+- Fixture P3 and sample release have no dependency on T004 or T050-T054. Real imports still need legitimate provenance; deferral is not permission to copy disallowed catalogs.
+- T040/T041/T042 gate T043. Failed recognition targets block recognition-improvement claims/full feature release; record any owner-approved reduced demo separately rather than checking failed tasks complete.
+
+## Story and Acceptance Traceability
+
+| Story | Main tasks | Independent proof |
+| --- | --- | --- |
+| US1 | T003, T006-T016, T018-T019, T046 | Reviewed features and holdout results without QS mutation |
+| US2 | T006-T012, T016-T019 | Same selected page/digest, uncertainty and preserved corrections |
+| US6 | T006, T012-T013, T016-T019 | Pending dimensions -> explicit validated revision; fallback |
+| US3 | T020-T028 | AC-04 exact packs/surplus and separate durable budget |
+| US4 | T029-T039, T042, T048 | Colombo/LKR fixture comparisons and immutable export |
+| US5 | T005, T040-T044, T047 | Restart-safe sample demo; T054 separately gates private data |
 
 | Acceptance | Tasks |
 | --- | --- |
-| AC-01 | T003, T010, T013-T015 |
-| AC-02 | T003, T010-T011, T015 |
-| AC-03 | T003, T012-T015 |
-| AC-04 | T020, T023 |
-| AC-05 | T012, T014-T015, T021-T023, T035 |
-| AC-06 | T004, T032-T034, T042 |
-| AC-07 | T004, T030-T031, T034, T042 |
-| AC-08 | T004, T033-T035, T042 |
-| AC-09 | T005, T041 |
-| AC-10 | T003, T015 |
+| AC-01 | T003, T010, T013-T015, T018-T019 |
+| AC-02 | T006, T010-T012, T019 |
+| AC-03 | T007-T010, T012-T019, T044-T045, T047 |
+| AC-04 | T020, T022-T023, T025-T027 |
+| AC-05 | T008, T012, T014, T019, T021-T025, T028, T035, T037-T038 |
+| AC-06 | T029, T032-T034, T036, T039, T042, T048 |
+| AC-06 / A1 | T049, T036, T034 |
+| AC-07 | T030-T031, T038-T039, T042, T048; T004/T050-T053 for live only |
+| AC-08 | T029, T033-T039, T042, T048 |
+| AC-08 / A1 | T049, T035-T036 |
+| AC-09 | T005, T009, T040-T041, T043-T044, T047; T054 for private use |
+| AC-09 / A4, A6 | T044, T055, T047 |
+| AC-10 | T003, T010, T015, T046 |
+| AC-11 | T006, T012-T013, T016-T019, T041 |
 
-Do not mark approval, source permissions, credentials, live collection or implementation complete merely because this documentation exists. No commits or pushes are performed by this package.
+Slice checks belong to each owning task, not a testing phase postponed until all implementation is done. Continue pending dependency-ordered work without treating completed helpers as a delivered customer workflow. No commit, push, migration, live supplier collection or confidential-data release has been performed.

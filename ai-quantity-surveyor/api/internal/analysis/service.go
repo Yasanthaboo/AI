@@ -91,7 +91,11 @@ func (service *Service) Get(id string) (Candidate, bool) {
 	if !ok && service.repository != nil {
 		return service.repository.Get(id)
 	}
-	return candidate, ok
+	if !ok {
+		return Candidate{}, false
+	}
+	cloned, err := copyCandidate(candidate)
+	return cloned, err == nil
 }
 
 func (service *Service) Confirm(id string, candidate Candidate) (Candidate, error) {
@@ -110,11 +114,21 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 	if original.State != StateReady {
 		return Candidate{}, fmt.Errorf("analysis %q is not ready for confirmation", id)
 	}
+	if candidate.Source != nil && (original.Source == nil || *candidate.Source != *original.Source) {
+		return Candidate{}, fmt.Errorf("analysis %q source identity cannot be changed", id)
+	}
 	candidate.ID = original.ID
 	candidate.FloorPlanID = original.FloorPlanID
 	candidate.DrawingAspect = original.DrawingAspect
 	candidate.Engine, candidate.Model = original.Engine, original.Model
 	candidate.StartedAt, candidate.CompletedAt = original.StartedAt, original.CompletedAt
+	candidate.Source = nil
+	if original.Source != nil {
+		source := *original.Source
+		candidate.Source = &source
+	}
+	candidate.Corrections = nil
+	candidate.Error = nil
 	sanitizeBounds(&candidate)
 	sanitizeAssumptions(&candidate)
 	revision := len(service.snapshots[id]) + 1
@@ -272,6 +286,8 @@ func (service *Service) run(analyzer Analyzer, started Candidate, content []byte
 	} else {
 		candidate.ID = id
 		candidate.FloorPlanID = floorPlanID
+		candidate.Source = started.Source
+		candidate.Corrections = nil
 		if candidate.DrawingAspect == 0 {
 			candidate.DrawingAspect = drawingAspect(content)
 		}

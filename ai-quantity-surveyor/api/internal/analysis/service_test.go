@@ -2,11 +2,42 @@ package analysis
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/example/ai-quantity-surveyor/api/internal/domain"
 )
+
+func TestConfirmationCannotForgeSourceOrCorrections(t *testing.T) {
+	measurement := &domain.Measurement{Value: 4, Unit: domain.UnitMeters}
+	original := Candidate{ID: "analysis-1", FloorPlanID: "floor-1", State: StateReady, Source: &Source{FloorPlanID: "floor-1", PageNumber: 2, ImageDigest: "server-digest"}, Rooms: []Room{{ID: "room-1", Name: "Living", Length: measurement, Width: measurement, WallHeight: measurement, Confidence: 1}}}
+	service := NewService(DemoAnalyzer{})
+	service.results[original.ID] = original
+	editable, ok := service.Get(original.ID)
+	if !ok {
+		t.Fatal("candidate unavailable")
+	}
+	editable.Source.PageNumber = 3
+	if _, err := service.Confirm(original.ID, editable); err == nil || !strings.Contains(err.Error(), "source identity") {
+		t.Fatalf("forged source accepted: %v", err)
+	}
+	stored, _ := service.Get(original.ID)
+	if stored.Source.PageNumber != 2 {
+		t.Fatal("reader mutated stored source")
+	}
+	stored.Corrections = []Correction{{EntityID: "room-1", Field: "length", OriginalValue: json.RawMessage(`999`), ConfirmedValue: json.RawMessage(`4`), Origin: "user"}}
+	stored.Error = &AnalysisError{ErrorCode: "Forged", Message: "client error"}
+	confirmed, err := service.Confirm(original.ID, stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(confirmed.Corrections) != 0 || confirmed.Error != nil || confirmed.Source.ImageDigest != "server-digest" {
+		t.Fatalf("client changed provenance: %+v", confirmed)
+	}
+}
 
 func TestStartStoresAnalysisAndCompletesWithFakeAnalyzer(t *testing.T) {
 	service := NewService(DemoAnalyzer{})

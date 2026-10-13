@@ -16,11 +16,13 @@ An AI-assisted quantity surveying MVP for residential house floor plans.
 - `.specify/memory/constitution.md` is the governing project constitution.
 - `specs/001-ai-quantity-surveyor/` contains the specification, implementation plan, and initial tasks.
 - `specs/004-project-workspace-and-finishes/` covers the projects dashboard, overview, finishes estimating, settings, and model tools; `tasks.md` traces each requirement to code and tests.
-- `specs/005-next-demo-recognition-and-material-prices/` proposes the next demo: improved windows/stairs/balconies review, a paint/tiles material budget, and sourced local-price comparisons. It contains `spec.md`, `plan.md`, `contracts.md`, `tasks.md`, and `checklists/requirements.md`. This scope is proposed, not implemented; live supplier collection requires region/source approval and a constitution amendment.
+- `specs/005-next-demo-recognition-and-material-prices/` defines the next demo: improved windows/stairs/balconies review, a dimension-confirmation preview, paint/tile budgets and local-price comparisons. Its specification, plan, research, data model, contracts, verification guide and tasks record approved constitution 1.5.0 scope and passed readiness analysis. Bounded foundations are implemented/tested; public integration and release remain pending. Pilot is Colombo/Sri Lanka/LKR; suppliers are deferred and the price demo will use labeled fixtures/imports until source approval.
 
 ## Next Demo
 
 Deliver recognition quality and source-drawing evidence first, then deterministic paint/tile requirements, then an allowlisted local-price pilot. Preserve human confirmation and existing estimate/export results. RAG and multi-agent orchestration are deferred until measured evaluation shows a need. Hosted Render/Neon deployment was reported successful during the first demo follow-up; access protection, regression verification, price freshness, and reproducible saved comparisons remain release gates. Use sample drawings until both web and API are protected.
+
+Feature 005 implementation has started: optional analysis/evidence contracts, a tested canonical selected-page helper with Poppler packaging, and pure paint/tile material formulas are present. New estimates capture confirmation revision provenance when available, and review reads/source identity have basic tampering safeguards. These changes are foundations, not a completed dimension-review/material-price UI; public integration, persistent job/quota handling, consented holdout evaluation and release checks remain pending. See feature `tasks.md` for verified versus incomplete work.
 
 The current Next.js scaffold is at the repository root so it can run immediately. The Go API starts with `go run ./api/cmd/server` from the repository root after changing into `api`, or with `go run ./cmd/server` from `api`.
 
