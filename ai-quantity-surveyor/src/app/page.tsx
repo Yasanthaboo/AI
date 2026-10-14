@@ -178,7 +178,7 @@ export default function Home() {
             onFloorPlan={setFloorPlan}
             onAnalyzed={analyzed}
             onBack={() => setStep("project")} />}
-          {step === "review" && candidate && <ReviewStep key={analysisId} analysisId={analysisId} candidate={confirmation?.candidate ?? candidate} analysis={candidate} settings={settings} engines={engines} floorPlanId={floorPlan?.id}
+          {step === "review" && candidate && <ReviewStep key={analysisId} analysisId={analysisId} candidate={confirmation?.candidate ?? candidate} analysis={candidate} settings={settings} engines={engines} floorPlanId={floorPlan?.id} file={file} lastConfirmed={confirmation}
             onRerun={analyzed} onBack={() => setStep("upload")} onConfirmed={(confirmed) => { setConfirmation(confirmed); setStep("model"); }} />}
           {step === "model" && confirmation && <ModelStep confirmation={confirmation} file={file} onBack={() => setStep("review")} onContinue={() => setStep("estimate")} />}
           {step === "estimate" && project && confirmation && <EstimateStep key={analysisId} project={project} analysisId={analysisId} confirmation={confirmation} estimates={estimates} settings={settings} onEstimate={(created) => setEstimates((current) => [created, ...current])} onBack={() => setStep("model")} />}

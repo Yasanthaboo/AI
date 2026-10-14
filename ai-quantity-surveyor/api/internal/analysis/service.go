@@ -21,6 +21,7 @@ type Service struct {
 	confirmed  map[string]Candidate
 	snapshots  map[string][]Confirmation
 	repository Repository
+	runtime    *analysisRuntime
 }
 
 type Confirmation struct {
@@ -66,6 +67,9 @@ func (service *Service) StartWithEngine(engine, floorPlanID string, content []by
 }
 
 func (service *Service) start(engine string, analyzer Analyzer, floorPlanID string, content []byte, fileName string) (Candidate, error) {
+	if service.runtime != nil {
+		return service.startManaged(context.Background(), engine, analyzer, floorPlanID, content, fileName, nil)
+	}
 	if floorPlanID == "" || len(content) == 0 {
 		return Candidate{}, fmt.Errorf("floor plan content is required")
 	}
@@ -85,6 +89,10 @@ func (service *Service) start(engine string, analyzer Analyzer, floorPlanID stri
 }
 
 func (service *Service) Get(id string) (Candidate, bool) {
+	if service.runtime != nil {
+		candidate, ok, err := service.Read(context.Background(), id)
+		return candidate, ok && err == nil
+	}
 	service.mu.RLock()
 	candidate, ok := service.results[id]
 	service.mu.RUnlock()
@@ -105,6 +113,13 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	original, ok := service.results[id]
+	if service.runtime != nil {
+		var err error
+		original, ok, err = service.runtime.jobs.ReadJob(context.Background(), id)
+		if err != nil {
+			return Candidate{}, runtimeFailure(503, "StatusStoreUnavailable", "Analysis status unavailable; retry later.", true)
+		}
+	}
 	if !ok && service.repository != nil {
 		original, ok = service.repository.Get(id)
 	}

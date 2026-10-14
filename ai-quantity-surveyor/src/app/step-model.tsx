@@ -30,7 +30,7 @@ export default function ModelStep({ confirmation, file, onBack, onContinue }: { 
     <div className="model-layout">
       <figure className="model-panel">
         <figcaption>Floor plan with detected rooms</figcaption>
-        {file ? <DrawingView file={file} rooms={rooms} selectedId={selectedId} onSelect={toggle} /> : <p className="empty-note">The original drawing is not available. The model still uses the saved room boundaries.</p>}
+        {file || confirmation.candidate.source ? <DrawingView file={file} analysisId={confirmation.analysisId} source={confirmation.candidate.source} rooms={rooms} selectedId={selectedId} onSelect={toggle} /> : <p className="empty-note">The original drawing is not available. The model still uses the saved room boundaries.</p>}
       </figure>
       <figure className="model-panel">
         <figcaption>3D model <span className="muted">· drag to orbit, scroll to zoom, hover for details</span></figcaption>

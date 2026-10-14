@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: surveyor_ui_test
+      POSTGRES_USER: surveyor_test
+      POSTGRES_PASSWORD: ${SURVEYOR_TEST_PASSWORD:?Set a temporary test password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U surveyor_test -d surveyor_ui_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgres://surveyor_test:${SURVEYOR_TEST_PASSWORD}@db:5432/surveyor_ui_test?sslmode=disable
+      PORT: "8080"
+      ALLOWED_ORIGIN: http://localhost:3002
+    ports:
+      - "127.0.0.1:${SURVEYOR_TEST_API_PORT:-18081}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

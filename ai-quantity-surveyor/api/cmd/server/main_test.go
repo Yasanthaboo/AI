@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +17,174 @@ import (
 	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
 )
+
+type handlerPageProcessor struct{}
+
+func (handlerPageProcessor) Metadata(context.Context, []byte, string) (analysis.PageMetadata, error) {
+	return analysis.PageMetadata{PageCount: 2, ContentType: "application/pdf"}, nil
+}
+
+func (handlerPageProcessor) Prepare(_ context.Context, _ []byte, _ string, page int, mode string) (analysis.PreparedPage, error) {
+	content := []byte("canonical-page")
+	digest := sha256.Sum256(content)
+	return analysis.PreparedPage{Content: content, Source: analysis.Source{PageNumber: page, SelectionMode: mode, ImageDigest: hex.EncodeToString(digest[:]), PixelWidth: 20, PixelHeight: 10}}, nil
+}
+
+func TestManagedAnalysisHandlers(t *testing.T) {
+	store := project.NewService()
+	created, _ := store.CreateProject(project.Details{Name: "Sample"})
+	floorPlan, err := store.SaveFloorPlan(created.ID, "drawing.pdf", "application/pdf", []byte("%PDF-1.4\nfixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := analysis.NewServiceWithEngines(analysis.DemoAnalyzer{}, map[string]analysis.Analyzer{"demo": analysis.DemoAnalyzer{}, "gemini": analysis.DemoAnalyzer{}}, nil)
+	if err := service.EnableRuntime(analysis.RuntimeConfig{Jobs: analysis.NewMemoryJobStore(), Preparer: handlerPageProcessor{}, DefaultEngine: "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Close)
+	mux := http.NewServeMux()
+	registerAnalysisHandlers(mux, store, service)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return response
+	}
+	path := "/api/floor-plans/" + floorPlan.ID
+	if response := call(http.MethodGet, path+"/pages", ""); response.Code != 200 || !strings.Contains(response.Body.String(), `"pageCount":2`) {
+		t.Fatalf("metadata: %d %s", response.Code, response.Body.String())
+	}
+	for _, body := range []string{`{"pageNumber":0}`, `{"pageNumber":3}`, `{"pageNumber":1.5}`, `{} {}`, `{"unknown":true}`} {
+		if response := call(http.MethodPost, path+"/analysis", body); response.Code != 400 {
+			t.Fatalf("accepted invalid input %s: %d", body, response.Code)
+		}
+	}
+	if response := call(http.MethodPost, path+"/analysis", `{"engine":"gemini"}`); response.Code != 503 || !strings.Contains(response.Body.String(), "ProviderQuotaNotConfigured") {
+		t.Fatalf("missing quota: %d %s", response.Code, response.Body.String())
+	}
+	response := call(http.MethodPost, path+"/analysis", `{"engine":"demo","pageNumber":2}`)
+	if response.Code != 202 {
+		t.Fatalf("start: %d %s", response.Code, response.Body.String())
+	}
+	var started analysis.Candidate
+	if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	var candidate analysis.Candidate
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		response = call(http.MethodGet, "/api/analyses/"+started.ID, "")
+		if response.Code != 200 {
+			t.Fatalf("poll: %d %s", response.Code, response.Body.String())
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &candidate); err != nil {
+			t.Fatal(err)
+		}
+		if candidate.State != analysis.StateAnalyzing {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("analysis did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if candidate.State != analysis.StateReady || candidate.Source == nil || candidate.Source.PageNumber != 2 {
+		t.Fatalf("wrong selected page: %+v", candidate)
+	}
+	image := call(http.MethodGet, "/api/analyses/"+started.ID+"/source-image", "")
+	if image.Code != 200 || image.Body.String() != "canonical-page" || image.Header().Get("Content-Type") != "image/png" || image.Header().Get("ETag") == "" {
+		t.Fatalf("source image: %d %s", image.Code, image.Body.String())
+	}
+	conditional := httptest.NewRequest(http.MethodGet, "/api/analyses/"+started.ID+"/source-image", nil)
+	conditional.Header.Set("If-None-Match", image.Header().Get("ETag"))
+	cached := httptest.NewRecorder()
+	mux.ServeHTTP(cached, conditional)
+	if cached.Code != 304 || cached.Body.Len() != 0 {
+		t.Fatal("source cache conditional failed")
+	}
+	if got := call(http.MethodGet, "/api/analyses/missing", "").Code; got != 404 {
+		t.Fatalf("missing status: %d", got)
+	}
+	if got := call(http.MethodPost, path+"/analysis", strings.Repeat(" ", 65537)+`{}`).Code; got != 413 {
+		t.Fatalf("oversized body: %d", got)
+	}
+}
+
+func TestProviderLimitsFromEnvironment(t *testing.T) {
+	t.Setenv("GEMINI_DAILY_CALL_LIMIT", "10")
+	t.Setenv("OLLAMA_DAILY_CALL_LIMIT", "0")
+	limits, err := providerLimitsFromEnvironment()
+	if err != nil || limits["gemini"] != 10 || limits["ollama"] != 0 {
+		t.Fatalf("limits: %v %v", limits, err)
+	}
+	t.Setenv("GEMINI_DAILY_CALL_LIMIT", "invalid")
+	if _, err := providerLimitsFromEnvironment(); err == nil {
+		t.Fatal("invalid provider quota accepted")
+	}
+}
+
+type quotaRejectedStore struct{ *analysis.MemoryJobStore }
+
+func (quotaRejectedStore) ReserveCall(context.Context, string, analysis.JobControl, string, string, string, int) error {
+	reset := time.Now().UTC().Add(time.Hour)
+	return &analysis.RuntimeError{Status: 429, Failure: analysis.AnalysisError{ErrorCode: "ProviderQuotaExceeded", Message: "Daily limit reached", Retryable: true, RetryAt: &reset}}
+}
+
+type handlerCountingAnalyzer struct{ calls *atomic.Int32 }
+
+func (analyzer handlerCountingAnalyzer) Analyze(ctx context.Context, content []byte, fileName string) (analysis.Candidate, error) {
+	analyzer.calls.Add(1)
+	return (analysis.DemoAnalyzer{}).Analyze(ctx, content, fileName)
+}
+
+func TestAcceptedQuotaFailureIsPolledWithoutProviderCall(t *testing.T) {
+	store := project.NewService()
+	created, _ := store.CreateProject(project.Details{Name: "Sample quota"})
+	floorPlan, err := store.SaveFloorPlan(created.ID, "drawing.pdf", "application/pdf", []byte("%PDF-1.4\nfixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	analyzer := handlerCountingAnalyzer{calls: &calls}
+	service := analysis.NewServiceWithEngines(analyzer, map[string]analysis.Analyzer{"gemini": analyzer}, nil)
+	if err := service.EnableRuntime(analysis.RuntimeConfig{Jobs: quotaRejectedStore{analysis.NewMemoryJobStore()}, Preparer: handlerPageProcessor{}, DefaultEngine: "gemini", QuotaScope: "test", DailyLimits: map[string]int{"gemini": 1}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Close)
+	mux := http.NewServeMux()
+	registerAnalysisHandlers(mux, store, service)
+	accepted := httptest.NewRecorder()
+	mux.ServeHTTP(accepted, httptest.NewRequest(http.MethodPost, "/api/floor-plans/"+floorPlan.ID+"/analysis", strings.NewReader(`{"engine":"gemini","pageNumber":2}`)))
+	if accepted.Code != 202 {
+		t.Fatalf("not accepted: %d %s", accepted.Code, accepted.Body.String())
+	}
+	var started analysis.Candidate
+	if err := json.Unmarshal(accepted.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/analyses/"+started.ID, nil))
+		if response.Code != 200 {
+			t.Fatalf("stored failure changed polling HTTP status: %d", response.Code)
+		}
+		var candidate analysis.Candidate
+		if err := json.Unmarshal(response.Body.Bytes(), &candidate); err != nil {
+			t.Fatal(err)
+		}
+		if candidate.State == analysis.StateFailed {
+			if candidate.Error == nil || candidate.Error.ErrorCode != "ProviderQuotaExceeded" || candidate.Error.RetryAt == nil || candidate.ErrorMessage == "" {
+				t.Fatalf("failure metadata missing: %+v", candidate)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("quota rejection was not persisted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if calls.Load() != 0 || accepted.Code != 202 {
+		t.Fatal("quota rejection invoked provider or rewrote acceptance")
+	}
+}
 
 func TestConfirmationReadHandlers(t *testing.T) {
 	service := analysis.NewService(analysis.DemoAnalyzer{})

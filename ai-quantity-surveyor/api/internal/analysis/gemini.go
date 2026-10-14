@@ -53,6 +53,9 @@ func (analyzer GeminiAnalyzer) Analyze(ctx context.Context, content []byte, file
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
+	protectedClient := *client
+	protectedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &protectedClient
 	requestBody := map[string]any{
 		"contents": []any{map[string]any{"parts": []any{
 			map[string]any{"text": extractionPrompt},

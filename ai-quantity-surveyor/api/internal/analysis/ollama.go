@@ -113,6 +113,9 @@ func (analyzer OllamaAnalyzer) Analyze(ctx context.Context, content []byte, file
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute}
 	}
+	protectedClient := *client
+	protectedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &protectedClient
 	response, err := client.Do(request)
 	if err != nil {
 		return Candidate{}, fmt.Errorf("vision provider request failed: %w", err)

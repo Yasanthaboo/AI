@@ -18,6 +18,12 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
+      - key: PROVIDER_QUOTA_SCOPE
+        sync: false
+      - key: GEMINI_DAILY_CALL_LIMIT
+        sync: false
+      - key: OLLAMA_DAILY_CALL_LIMIT
+        sync: false
       - key: OLLAMA_ENDPOINT
         sync: false
       - key: OLLAMA_API_KEY

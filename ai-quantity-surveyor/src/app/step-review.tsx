@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { jsonInit, request, type Bounds, type Candidate, type Confirmation, type Opening } from "./api";
+import { describeMeasurement, formatNumber, jsonInit, request, type Bounds, type Candidate, type Confirmation, type Measurement, type Opening } from "./api";
 import AnalysisDetails from "./analysis-details";
+import DrawingView from "./drawing-view";
 import { describeDefaultHeight, wallHeightIn, type Settings } from "./settings";
 
 type EditableRoom = { id: string; name: string; length: string; width: string; wallHeight: string; unit: string; bounds?: Bounds | null; flag: string | null; defaultHeight?: boolean };
@@ -11,22 +12,26 @@ type EditableOpening = { id: string; type: "Door" | "Window"; roomId: string; wi
 const units = [["m", "m"], ["cm", "cm"], ["ft", "ft"], ["in", "in"]];
 const text = (value?: number) => (value && value > 0 ? String(value) : "");
 const positive = (value: string) => Number.isFinite(Number(value)) && Number(value) > 0;
+const metreFactors: Record<string, number> = { m: 1, cm: 0.01, ft: 0.3048, in: 0.0254 };
+const measurementText = (measurement: Measurement | null | undefined, unit: string) => measurement && metreFactors[measurement.unit] && metreFactors[unit] ? text(measurement.value * metreFactors[measurement.unit] / metreFactors[unit]) : "";
 
-function toOpenings(candidate: Candidate, fallbackRoom: string): EditableOpening[] {
+function toOpenings(candidate: Candidate): EditableOpening[] {
   const map = (type: EditableOpening["type"]) => (opening: Opening): EditableOpening => ({
-    id: opening.id, type, roomId: opening.roomId || fallbackRoom,
-    width: text(opening.width?.value), height: text(opening.height?.value), unit: opening.width?.unit || "m",
+    id: opening.id, type, roomId: opening.roomId || "",
+    width: measurementText(opening.width, opening.width?.unit || "m"), height: measurementText(opening.height, opening.width?.unit || "m"), unit: opening.width?.unit || "m",
   });
   return [...(candidate.doors || []).map(map("Door")), ...(candidate.windows || []).map(map("Window"))];
 }
 
-export default function ReviewStep({ analysisId, candidate, analysis, settings, engines, floorPlanId, onRerun, onConfirmed, onBack }: {
+export default function ReviewStep({ analysisId, candidate, analysis, settings, engines, floorPlanId, file, lastConfirmed, onRerun, onConfirmed, onBack }: {
   analysisId: string;
   candidate: Candidate;
   analysis: Candidate;
   settings: Settings;
   engines: string[];
   floorPlanId?: string;
+  file?: File | null;
+  lastConfirmed?: Confirmation | null;
   onRerun: (analysisId: string, candidate: Candidate) => void;
   onConfirmed: (confirmation: Confirmation) => void;
   onBack: () => void;
@@ -34,14 +39,24 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
   const defaultLabel = `Default (${describeDefaultHeight(settings)})`;
   const [rooms, setRooms] = useState<EditableRoom[]>(() => (candidate.rooms || []).map((room, index) => {
     const unit = room.length?.unit || room.width?.unit || settings.preferredUnit;
-    const wallHeight = text(room.wallHeight?.value);
+    const wallHeight = measurementText(room.wallHeight, unit);
     return {
-      id: room.id || `room-${index + 1}`, name: room.name, length: text(room.length?.value), width: text(room.width?.value),
+      id: room.id || `room-${index + 1}`, name: room.name, length: measurementText(room.length, unit), width: measurementText(room.width, unit),
       wallHeight: wallHeight || wallHeightIn(settings, unit), defaultHeight: !wallHeight || !!room.assumptions?.includes("wallHeight"), unit, bounds: room.bounds,
       flag: room.uncertainty || ((room.confidence ?? 1) < 1 ? "Low confidence" : null),
     };
   }));
-  const [openings, setOpenings] = useState<EditableOpening[]>(() => toOpenings(candidate, candidate.rooms?.[0]?.id || "room-1"));
+  const [openings, setOpenings] = useState<EditableOpening[]>(() => toOpenings(candidate));
+  const [selectedId, setSelectedId] = useState(candidate.rooms?.[0]?.id || "");
+  const [selectedOpeningId, setSelectedOpeningId] = useState("");
+  const selectedRoom = rooms.find((room) => room.id === selectedId);
+  const originalRoom = analysis.rooms?.find((room) => room.id === selectedId);
+  const confirmedRoom = lastConfirmed?.candidate.rooms.find((room) => room.id === selectedId);
+  const selectedOpening = openings.find((opening) => opening.id === selectedOpeningId);
+  const originalOpening = [...(analysis.doors || []), ...(analysis.windows || [])].find((opening) => opening.id === selectedOpeningId);
+  const confirmedOpening = [...(lastConfirmed?.candidate.doors || []), ...(lastConfirmed?.candidate.windows || [])].find((opening) => opening.id === selectedOpeningId);
+  const selectedRegion = selectedOpening ? originalOpening?.evidence?.width?.region || originalOpening?.evidence?.height?.region : originalRoom?.evidence?.length?.region || originalRoom?.evidence?.width?.region;
+  const selectRoom = (id: string) => { setSelectedId(id); setSelectedOpeningId(""); };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -65,7 +80,7 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
   const editOpening = (id: string, patch: Partial<EditableOpening>) => setOpenings((current) => current.map((opening) => opening.id === id ? { ...opening, ...patch } : opening));
   const nextId = (prefix: string, ids: string[]) => { let index = ids.length + 1; while (ids.includes(`${prefix}-${index}`)) index += 1; return `${prefix}-${index}`; };
   const addRoom = () => setRooms((current) => [...current, { id: nextId("room", current.map((room) => room.id)), name: "New room", length: "", width: "", wallHeight: wallHeightIn(settings, current[0]?.unit || settings.preferredUnit), defaultHeight: true, unit: current[0]?.unit || settings.preferredUnit, flag: null }]);
-  const addOpening = (type: EditableOpening["type"]) => setOpenings((current) => [...current, { id: nextId(type.toLowerCase(), current.map((opening) => opening.id)), type, roomId: rooms[0]?.id || "", width: type === "Door" ? "0.9" : "1.2", height: type === "Door" ? "2.1" : "1.2", unit: "m" }]);
+  const addOpening = (type: EditableOpening["type"]) => setOpenings((current) => [...current, { id: nextId(type.toLowerCase(), current.map((opening) => opening.id)), type, roomId: "", width: "", height: "", unit: "m" }]);
 
   const confirm = async () => {
     if (problems.length) { setError(problems[0]); return; }
@@ -97,16 +112,43 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
     </header>
     <AnalysisDetails candidate={analysis} engines={engines} floorPlanId={floorPlanId} onRerun={onRerun} compact />
 
+    <div className="review-preview-layout">
+      <div className="review-drawing">
+        <h3 className="section-title">Dimension preview</h3>
+        <DrawingView file={file} analysisId={analysisId} source={analysis.source} rooms={(candidate.rooms || []).map((room) => ({ ...room, name: rooms.find((editable) => editable.id === room.id)?.name || room.name }))} selectedId={selectedId} onSelect={selectRoom} highlight={selectedRegion} />
+      </div>
+      <div className="dimension-comparison">
+        <h3 className="section-title">{selectedOpening ? `${selectedOpening.type} ${selectedOpening.id}` : selectedRoom?.name || "Room dimensions"}</h3>
+        <span className="badge badge--warning">Unconfirmed review</span>
+        {lastConfirmed && <p className="cell-note">Last confirmed revision {lastConfirmed.revision}</p>}
+        {selectedOpening ? <dl>{(["width", "height"] as const).map((field) => <div key={field}>
+          <dt>{field === "width" ? "Width" : "Height"}</dt>
+          <dd className="cell-note">Original: {describeMeasurement(originalOpening?.[field])}</dd>
+          <dd>Pending: {selectedOpening[field] || "Missing"} {selectedOpening.unit}{positive(selectedOpening[field]) && metreFactors[selectedOpening.unit] ? ` (${formatNumber(Number(selectedOpening[field]) * metreFactors[selectedOpening.unit], 4)} m)` : ""}</dd>
+          {confirmedOpening && <dd className="cell-note">Confirmed: {describeMeasurement(confirmedOpening[field])}</dd>}
+        </div>)}</dl> : selectedRoom ? <dl>
+          {(["length", "width", "wallHeight"] as const).map((field) => <div key={field}>
+            <dt>{field === "wallHeight" ? "Wall height" : field === "length" ? "Length" : "Width"}</dt>
+            <dd><span className="cell-note">Original: {describeMeasurement(originalRoom?.[field])}</span></dd>
+            <dd>Pending: {selectedRoom[field] || "Missing"} {selectedRoom.unit}{positive(selectedRoom[field]) && metreFactors[selectedRoom.unit] ? ` (${formatNumber(Number(selectedRoom[field]) * metreFactors[selectedRoom.unit], 4)} m)` : ""}</dd>
+            {confirmedRoom && <dd className="cell-note">Confirmed: {describeMeasurement(confirmedRoom[field])}</dd>}
+            {field === "wallHeight" && selectedRoom.defaultHeight && <dd className="cell-note">{defaultLabel}</dd>}
+          </div>)}
+        </dl> : <p className="empty-note">Select a room to compare dimensions.</p>}
+        <p className="cell-note">{selectedOpening ? selectedRegion ? "Opening evidence region highlighted; wall placement remains indicative." : "Source region not available for this opening." : selectedRoom?.bounds ? "Room boundary is AI-estimated; dimension labels remain subject to review." : "Source region not available for this room."}</p>
+      </div>
+    </div>
+
     <div className="table-wrap">
       <table className="data-table">
         <thead><tr><th>Room</th><th>Length</th><th>Width</th><th>Wall height</th><th>Unit</th><th><span className="sr-only">Actions</span></th></tr></thead>
         <tbody>
-          {rooms.map((room) => <tr key={room.id} className={room.flag ? "row--flagged" : undefined}>
+          {rooms.map((room) => <tr key={room.id} className={[room.flag ? "row--flagged" : "", selectedId === room.id ? "row--selected" : ""].join(" ")} onFocus={() => selectRoom(room.id)}>
             <td><input aria-label="Room name" value={room.name} onChange={(event) => editRoom(room.id, { name: event.target.value })} />
               {room.flag && <div className="row-flag"><span>⚠ {room.flag}</span><button type="button" className="link-button" onClick={() => editRoom(room.id, { flag: null })}>Looks right</button></div>}</td>
             {(["length", "width", "wallHeight"] as const).map((field) => <td key={field}><input aria-label={`${room.name} ${field === "wallHeight" ? "wall height" : field}`} type="number" min="0" step="0.01" inputMode="decimal" value={room[field]} className={positive(room[field]) ? undefined : "input--invalid"} onChange={(event) => editRoom(room.id, { [field]: event.target.value, ...(field === "wallHeight" ? { defaultHeight: false } : {}) })} />
               {field === "wallHeight" && room.defaultHeight && <div className="cell-note">{defaultLabel}</div>}</td>)}
-            <td><select aria-label={`${room.name} unit`} value={room.unit} onChange={(event) => editRoom(room.id, { unit: event.target.value, ...(room.defaultHeight ? { wallHeight: wallHeightIn(settings, event.target.value) } : {}) })}>{units.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
+            <td><select aria-label={`${room.name} unit`} value={room.unit} onChange={(event) => { const unit = event.target.value; const convert = (value: string) => positive(value) && metreFactors[room.unit] ? String(Number(value) * metreFactors[room.unit] / metreFactors[unit]) : value; editRoom(room.id, { unit, length: convert(room.length), width: convert(room.width), wallHeight: room.defaultHeight ? wallHeightIn(settings, unit) : convert(room.wallHeight) }); }}>{units.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
             <td><button type="button" className="icon-button" aria-label={`Remove ${room.name}`} title="Remove room" onClick={() => { setRooms((current) => current.filter((item) => item.id !== room.id)); setOpenings((current) => current.filter((item) => item.roomId !== room.id)); }}>✕</button></td>
           </tr>)}
         </tbody>
@@ -120,12 +162,12 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
         <table className="data-table">
           <thead><tr><th>Type</th><th>Room</th><th>Width</th><th>Height</th><th>Unit</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
-            {openings.map((opening) => <tr key={opening.id}>
+            {openings.map((opening) => <tr key={opening.id} onFocus={() => { setSelectedId(opening.roomId); setSelectedOpeningId(opening.id); }}>
               <td><span className={`badge ${opening.type === "Door" ? "badge--door" : "badge--window"}`}>{opening.type}</span></td>
               <td><select aria-label={`${opening.id} room`} value={opening.roomId} onChange={(event) => editOpening(opening.id, { roomId: event.target.value })}>{!rooms.some((room) => room.id === opening.roomId) && <option value="">Choose room</option>}{rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}</select></td>
               <td><input aria-label={`${opening.type} width`} type="number" min="0" step="0.01" value={opening.width} onChange={(event) => editOpening(opening.id, { width: event.target.value })} /></td>
               <td><input aria-label={`${opening.type} height`} type="number" min="0" step="0.01" value={opening.height} onChange={(event) => editOpening(opening.id, { height: event.target.value })} /></td>
-              <td><select aria-label={`${opening.id} unit`} value={opening.unit} onChange={(event) => editOpening(opening.id, { unit: event.target.value })}>{units.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
+              <td><select aria-label={`${opening.id} unit`} value={opening.unit} onChange={(event) => { const unit = event.target.value; const convert = (value: string) => positive(value) && metreFactors[opening.unit] ? String(Number(value) * metreFactors[opening.unit] / metreFactors[unit]) : value; editOpening(opening.id, { unit, width: convert(opening.width), height: convert(opening.height) }); }}>{units.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
               <td><button type="button" className="icon-button" aria-label={`Remove ${opening.id}`} title="Remove opening" onClick={() => setOpenings((current) => current.filter((item) => item.id !== opening.id))}>✕</button></td>
             </tr>)}
           </tbody>

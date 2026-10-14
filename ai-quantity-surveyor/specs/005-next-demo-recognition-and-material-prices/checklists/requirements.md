@@ -60,6 +60,8 @@
 - [x] Additive Go/TypeScript analysis contracts and compatibility tests pass (T006).
 - [x] Poppler packaging/non-root runtime and canonical selected-page helper checks pass, including a real rotation/crop test under 512 MB (T045/T007).
 - [x] Pure paint/tile formulas, exact packs/surplus, duplicate-allocation and precision boundary tests pass (T020).
-- [ ] Complete source/job persistence, quota/lease orchestration, public routes and dimension-review UI.
+- [x] Verify memory/PostgreSQL source/job persistence and daily quotas, including live guarded DB and no-dispatch failures (T008/T055).
+- [x] Implement/test managed API and core selected-page dimension preview; 24 browser tests pass against isolated sample services. This is partial P1 delivery, not closure of evidence/audit prerequisites or full feature acceptance.
+- [ ] Finish source-evidence sanitization, server correction auditing and the remaining runtime/review task gates before marking their full scopes complete.
 - [ ] Complete evidence/confirmation validation, provenance ownership integration and material budget/comparison persistence/UI/export workflows.
 - [ ] Acquire consented annotated recognition holdouts and record actual baseline/accuracy; generated rendering fixtures are not recognition evidence.

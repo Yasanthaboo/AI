@@ -20,6 +20,9 @@ services:
       dockerfile: Dockerfile.api
     environment:
       DATABASE_URL: postgres://surveyor:${POSTGRES_PASSWORD}@db:5432/surveyor?sslmode=disable
+      PROVIDER_QUOTA_SCOPE: ${PROVIDER_QUOTA_SCOPE:-}
+      GEMINI_DAILY_CALL_LIMIT: ${GEMINI_DAILY_CALL_LIMIT:-0}
+      OLLAMA_DAILY_CALL_LIMIT: ${OLLAMA_DAILY_CALL_LIMIT:-0}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-}
