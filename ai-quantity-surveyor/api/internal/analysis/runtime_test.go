@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -81,5 +82,75 @@ func TestManagedAnalysisMissingQuotaFailsBeforeAcceptance(t *testing.T) {
 	var failure *RuntimeError
 	if !errors.As(err, &failure) || failure.Status != 503 || analyzer.calls.Load() != 0 {
 		t.Fatalf("invalid quota preflight: %v", err)
+	}
+}
+
+type terminalFailureStore struct {
+	*MemoryJobStore
+	failFinish    atomic.Bool
+	failRecovery  atomic.Bool
+	finishOnce    sync.Once
+	finishFailure chan struct{}
+}
+
+func (store *terminalFailureStore) FinishJob(ctx context.Context, candidate Candidate, control JobControl) error {
+	if store.failFinish.Load() {
+		store.finishOnce.Do(func() { close(store.finishFailure) })
+		return errors.New("terminal write unavailable")
+	}
+	return store.MemoryJobStore.FinishJob(ctx, candidate, control)
+}
+
+func (store *terminalFailureStore) RecoverExpired(ctx context.Context) error {
+	if store.failRecovery.Load() {
+		return errors.New("recovery store unavailable")
+	}
+	return store.MemoryJobStore.RecoverExpired(ctx)
+}
+
+type failingPageProcessor struct{}
+
+func (failingPageProcessor) Metadata(context.Context, []byte, string) (PageMetadata, error) {
+	return PageMetadata{PageCount: 1, ContentType: "image/png"}, nil
+}
+
+func (failingPageProcessor) Prepare(context.Context, []byte, string, int, string) (PreparedPage, error) {
+	return PreparedPage{}, errors.New("renderer failed")
+}
+
+func TestManagedAnalysisStatusOutageRecoversAfterTerminalWriteFailure(t *testing.T) {
+	store := &terminalFailureStore{MemoryJobStore: NewMemoryJobStore(), finishFailure: make(chan struct{})}
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	var clockMu sync.Mutex
+	store.clock = func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return now }
+	store.failFinish.Store(true)
+	store.failRecovery.Store(true)
+	analyzer := &countingAnalyzer{}
+	service := NewServiceWithEngines(analyzer, map[string]Analyzer{"demo": analyzer}, nil)
+	if err := service.EnableRuntime(RuntimeConfig{Jobs: store, Preparer: failingPageProcessor{}, DefaultEngine: "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	started, err := service.StartWithPage(context.Background(), "demo", "drawing", pageImage(t, 20, 10), "plan.png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-store.finishFailure:
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal write failure was not attempted")
+	}
+	_, found, err := service.Read(context.Background(), started.ID)
+	var failure *RuntimeError
+	if found || !errors.As(err, &failure) || failure.Status != 503 {
+		t.Fatalf("status outage should return 503: found=%t err=%v", found, err)
+	}
+	store.failRecovery.Store(false)
+	clockMu.Lock()
+	now = now.Add(61 * time.Second)
+	clockMu.Unlock()
+	failed, found, err := service.Read(context.Background(), started.ID)
+	if err != nil || !found || failed.State != StateFailed || failed.Error == nil || !failed.Error.Retryable || analyzer.calls.Load() != 0 {
+		t.Fatalf("expired terminal-write failure was not recovered safely: candidate=%+v found=%t err=%v calls=%d", failed, found, err, analyzer.calls.Load())
 	}
 }

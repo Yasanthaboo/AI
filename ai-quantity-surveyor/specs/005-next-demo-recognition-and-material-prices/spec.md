@@ -2,8 +2,8 @@
 
 **Feature:** 005-next-demo-recognition-and-material-prices
 **Created:** 2026-10-13
-**Status:** Initial clarification pass complete on 2026-10-13: selected-page scope, recognition targets, dimension preview and Colombo/LKR pilot recorded. Supplier shortlist explicitly deferred; operational approval gates and implementation remain pending under constitution 1.5.0.
-**Baseline:** Implemented spec 004; constitution 1.5.0 authorizes bounded P1-P3 extensions. Region/source approvals and private-data release gates remain unresolved.
+**Status:** Constitution 1.6.0 ratified on 2026-10-14 adds reviewed plaster-material budgeting to the bounded feature scope. Implementation and operational supplier/private-data gates remain tracked separately.
+**Baseline:** Implemented spec 004; constitution 1.6.0 authorizes bounded P1-P3 extensions plus P2 plaster-material calculations. Region/source approvals and private-data release gates remain unresolved.
 
 ## Problem and Demo Goal
 
@@ -43,6 +43,23 @@ As a surveyor, I can use confirmed paint/tile quantities and reviewed product co
 1. Given confirmed paint/tile quantities and reviewed consumption/pack data, when a material budget is calculated, then it shows required amount, whole packs, purchased amount, surplus and assumptions separately from the finish-rate estimate.
 2. Given missing coverage or pack size, when budgeting is requested, then the affected material is identified as incomplete while the ordinary estimate remains available.
 3. Given excluded flooring or a flooring finish that is not tile, when a tile budget is calculated, then that area is not silently included as tile.
+
+### US7 - Budget plaster materials (Priority P2)
+
+As a surveyor, I can estimate reviewed traditional cement/sand or datasheet-backed premixed plaster from the confirmed estimate's net plaster area, separately from QS finish-rate totals.
+
+**Independent test:** A confirmed net plaster area plus explicitly reviewed recipe values produces deterministic cement and sand quantities/packs, or manufacturer-rate premix quantities/packs. Identical inputs reproduce values; missing inputs block saving; paint/tile budgets and QS totals remain unchanged.
+
+**Acceptance scenarios:**
+1. Given a selected room's confirmed net plaster area, reviewed layer thickness, cement:sand volume parts, dry-volume factor, cement density and cement/sand pack sizes, when a traditional mix budget is calculated, then cement mass and sand volume are separately reported with waste applied once, whole packs and surplus.
+2. Given a reviewed premix product specification, datasheet consumption per m², thickness and kg bag size, when a premix budget is calculated, then only the reviewed per-area product consumption is used and packs/surplus are reported.
+3. Given missing or invalid recipe, density, pack or consumption values, when a plaster budget is requested, then no defaults are substituted and no version is saved.
+4. Given a room assigned to traditional plaster, when premix is selected for the same room (or vice versa), then the conflicting plaster systems are rejected.
+5. Given plaster requirements, when the material-only report is exported, then cement, sand and premix lines retain recipe, source area, waste, product assumptions and units without changing existing QS reports.
+
+**Formula:** For confirmed net plaster area $A$ in m² and reviewed thickness $t$ in mm, traditional-mix dry volume is $V=A(t/1000)F$, where $F$ is the explicitly reviewed dry-volume factor. For reviewed cement/sand volume parts $C:S$ and cement bulk density $\rho$ kg/m³, base cement is $V \cdot \frac{C}{C+S} \cdot \rho$ kg and base sand is $V \cdot \frac{S}{C+S}$ m³. Premix uses $Aq$ kg for reviewed datasheet consumption $q$ kg/m² at the recorded thickness; do not multiply by thickness again. Apply material waste once to each base amount, then round purchasing quantities up to reviewed pack sizes. These deterministic quantities are not a recommended or structural-engineering mix.
+
+**Governance:** Owner approved this bounded scope on 2026-10-14 and ratified it in constitution 1.6.0. No concrete/structural design, supplier price coverage, procurement or hosted/private-data approval is implied.
 
 ### US4 - Compare local prices (Priority P3; source approval gated)
 
@@ -101,6 +118,7 @@ As a surveyor, I can compare editable room and opening dimensions with the selec
 - **FR-004 Validation boundary.** Stairs/balconies are informational, excluded from all QS formulas. Invalid informational geometry produces review warnings or requires correction/exclusion, not a new dependency for estimates. Required window dimensions/room associations keep existing confirmation validation. Never use image bounds as measured dimensions.
 - **FR-005 Model annotations.** Show reviewed stair/balcony annotations only where source geometry is usable; otherwise provide text. No invented stair rise/run, elevation, structure, or railing. Window evidence regions are not verified wall anchors. Existing indicative 3D openings stay labeled indicative; geometry changes never change QS results.
 - **FR-006 Paint/tile requirements.** Deterministically calculate paint litres and tile square metres from a frozen confirmed quantity result, reviewed coverage/coats or pack coverage, and explicit waste. Round purchasing requirements up to whole packs; show measured quantity, required material, purchased quantity, and surplus. Missing yield/pack data blocks the affected budget item, not the ordinary estimate.
+- **FR-016 Plaster material requirements.** From each selected room's frozen confirmed `NetPlasterArea`, support mutually exclusive traditional cement/sand mix or premixed plaster allocations. Traditional mix requires explicitly reviewed layer thickness, cement:sand volume parts, dry-volume factor, cement density, cement/sand specifications and respective pack sizes. Premix requires reviewed product specification, thickness, datasheet kg/m² consumption and kg pack size. Derive every area server-side from the frozen estimate. Show separate cement, sand and/or premix base/required/purchased/packs/surplus with material waste applied once. No ratios, thickness, density, consumption or pack defaults are allowed; blank/invalid inputs create no budget version. This feature estimates consumption only and is not structural or construction-design advice; it does not change legacy QS results or authorize live plaster supplier offers.
 - FR-006 validation clarification (A3): Reject required positive coverage/pack inputs that become zero at the supported material precision, identifying the affected field; never silently substitute a minimum. A positive source quantity below supported precision must not appear as zero required packs. Existing QS estimation remains available when an affected material budget is invalid.
 - **FR-007 Separate budgets.** Store versioned material-only budgets referencing estimate ID and exact confirmation revision, reviewed recipe/product inputs, formula version, selections, timestamps, and assumptions. Do not silently add material totals to existing finish-rate estimates. Waste is applied once to material requirements; do not reuse waste-adjusted finish costs as quantities. Existing estimates/exports are unchanged.
 - FR-007 allocation clarification (A2): Each room/trade has at most one material allocation per budget; reject duplicates before aggregating quantities, naming the room/trade. Derive areas from confirmed estimate quantities, not submitted areas. Compatible allocations from different rooms may share packs after validation; splitting one room/trade between multiple products/areas is deferred. No additional confirmation screen is required.
@@ -140,6 +158,7 @@ As a surveyor, I can compare editable room and opening dimensions with the selec
 9. **AC-09 (FR-014):** Hosted desktop/mobile workflows, API/web protection or sample-only release restrictions, provider setup, restart persistence, and deploy regression checks are recorded before the customer demo.
 10. **AC-10 (FR-001-005):** Evaluate at least 10 consented holdout plan pages, with at least 20 annotated instances of each feature type across the set, excluded from tuning. Windows require at least 90% precision and 90% recall; stairs and balconies each require at least 85% precision and 85% recall. At least 95% of legible labeled room/opening dimensions must be extracted with correct units and within 2% of annotated values; missing predictions count as failures. Report results separately per provider/model, reduce window misses versus the recorded baseline, and do not worsen baseline room/dimension accuracy. Fixture acquisition/annotation and matching/scoring rules must be completed before tuning; no claim that these targets are already achieved.
 11. **AC-11 (FR-002-004, FR-015):** Before confirmation, the selected source page, editable dimension panel, original values, pending corrections, units/metre equivalents and assumptions are distinguishable. Selecting a room/window links to available evidence; missing evidence and renderer failure yield explicit status and a usable list fallback. Editing a value updates pending preview data but not the last confirmed revision or prior estimate/export. Invalid required dimensions/associations block confirmation; valid explicit confirmation produces a new immutable revision. Preview use never derives QS measurements from pixels or confirms automatically. Verify readable desktop/mobile layout and zoom/pan behavior.
+12. **AC-12 (FR-016):** From 100 m² net plaster area at reviewed thickness 12 mm, mix 1:4, dry-volume factor 1.33 and cement density 1440 kg/m³, 10% material waste yields base cement 459.648 kg and sand 1.2768 m³; with 50 kg cement and 1 m³ sand packs, require 11 and 2 packs respectively. A 20 m² premix at reviewed consumption 1.8 kg/m², 10% waste and 25 kg packs yields 39.6 kg required, 2 packs, 50 kg purchased and 10.4 kg surplus. Missing inputs block plaster budget creation, formulas reproduce deterministically, traditional/premix cannot both be allocated to a room, and QS totals/exports remain unchanged.
 
 ### Additional Checks for Existing Acceptance Criteria
 
@@ -153,10 +172,10 @@ As a surveyor, I can compare editable room and opening dimensions with the selec
 ## Scope, Assumptions, and Decisions
 
 - P1 recognition/review is the first demo increment. P2 material budgeting can use curated product fixtures. P3 live prices is conditional on region, supplier permissions, and data readiness; use explicitly labeled fixture/imported prices if gates are unresolved.
-- Paint and tiles are approved pilot categories, not confirmed supplier coverage. Product consumption inputs require documented supplier specifications or manual surveyor approval.
+- Paint/tile product-price fixtures remain the only comparison coverage. Plaster material calculations are ratified; plaster product prices/offers are not available or approved. Product consumption inputs require documented product data or explicit surveyor review.
 - Pilot is Colombo, Sri Lanka, with LKR local-price comparisons, selected by the owner. Candidate suppliers remain deliberately undecided; until approved, the price demo uses labeled fixtures/imports rather than live scraping. Location selection is not source permission or proof of delivery coverage.
 - One residential drawing/floor stays the limit. PDFs support exactly one user-selected page per analysis, not combined multi-page/floor extraction. Unselected pages remain explicitly unprocessed. Provider-compatible processing of the selected page, including Ollama PDF rasterization, is an implementation dependency, not an assumed delivered capability.
-- Deferred: cement/sand/plaster recipes, structural quantities, external balcony finishes, stair costing, full BOQ, purchases/procurement, supplier management, multiple drawings/floors, verified BIM/CAD, autonomous agents, LangGraph/MCP, RAG knowledge assistants, and arbitrary web-wide scraping.
+- Deferred: concrete/structural mix design, structural quantities, external balcony finishes, stair costing, full BOQ, purchases/procurement, supplier management, multiple drawings/floors, verified BIM/CAD, autonomous agents, LangGraph/MCP, RAG knowledge assistants, and arbitrary web-wide scraping.
 - Supplier list/access policy, freshness interval, pack/spec equivalence rules, annotated fixture availability/scoring rules, and hosted access mechanism remain open operational decisions. Region/currency and recognition thresholds are agreed, but sources, fixtures and measured results are not delivered. No customer date or reliable live-price claim is committed before the relevant gates are resolved.
 - RAG may be reconsidered for cited catalog retrieval after trustworthy ingestion; a second-model verification pass may be reconsidered only after measured extraction errors justify its latency/cost. Neither is an initial-demo dependency.
 
@@ -169,6 +188,7 @@ As a surveyor, I can compare editable room and opening dimensions with the selec
 - Requirement added by owner: Include a preview to confirm dimensions. The P1 review workflow must show the selected drawing with linked editable dimensions before explicit validated confirmation; preview interaction alone never confirms measurements.
 - Q: Which country should the local paint/tile price pilot target? A: Sri Lanka. City/region, currency and supplier shortlist have not yet been provided; live-source approvals remain pending.
 - Q: Which initial region/currency and suppliers should the Sri Lanka pilot use? A: Colombo and Sri Lankan rupees (LKR). Suppliers remain undecided; proceed with recognition/material budgeting and clearly labeled fixture/imported price comparisons until live sources/access policies are approved.
+- Q: Should material budgets cover the omitted plaster inputs? A: Yes. On 2026-10-14 the owner explicitly approved and ratified the bounded cement/sand and premix consumption scope through constitution 1.6.0: confirmed net plaster area, reviewed inputs only, no defaults. This does not approve plaster-price suppliers or construction-mix recommendations.
 
 ## Deferred Operational Decisions
 

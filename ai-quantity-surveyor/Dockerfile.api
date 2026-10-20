@@ -7,10 +7,12 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/server ./api/cmd/server
 
 FROM builder AS test-builder
 RUN CGO_ENABLED=0 go test -c -o /out/analysis.test ./api/internal/analysis
+RUN CGO_ENABLED=0 go test -c -o /out/materials.test ./api/internal/materials
 
 FROM alpine:3.21 AS page-tests
 RUN apk add --no-cache ca-certificates poppler-utils
 COPY --from=test-builder /out/analysis.test /app/analysis.test
+COPY --from=test-builder /out/materials.test /app/materials.test
 USER 10001:10001
 CMD ["/app/analysis.test", "-test.run", "TestPreparePDFWithPoppler", "-test.v"]
 

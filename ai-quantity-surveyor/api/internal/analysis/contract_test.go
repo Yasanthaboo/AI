@@ -58,6 +58,21 @@ func TestJobControlNeverSerialized(t *testing.T) {
 	}
 }
 
+func TestEngineEvidenceIsBoundAndInvalidRegionExcluded(t *testing.T) {
+	candidate := Candidate{ID: "analysis", FloorPlanID: "floor", Source: &Source{PageNumber: 2}, Rooms: []Room{{ID: "room", Evidence: map[string]Evidence{
+		"length": {PageNumber: 1, Origin: "manual", Region: &Bounds{X: 0.1, Y: 0.1, Width: 0.2, Height: 0.2}},
+		"width":  {Region: &Bounds{X: 0.9, Y: 0.1, Width: 0.3, Height: 0.2}},
+	}}}}
+	NormalizeEngineEvidence(&candidate)
+	evidence := candidate.Rooms[0].Evidence["length"]
+	if evidence.Origin != "engine" || evidence.AnalysisID != "analysis" || evidence.PageNumber != 2 {
+		t.Fatalf("source binding failed: %+v", evidence)
+	}
+	if _, exists := candidate.Rooms[0].Evidence["width"]; exists || len(candidate.ReviewIssues) != 1 {
+		t.Fatal("invalid optional region remained authoritative")
+	}
+}
+
 func TestValidateCandidateAllowsIncompleteReview(t *testing.T) {
 	candidate := Candidate{State: StateReady, Rooms: []Room{{ID: "room-1", Name: "Living", Confidence: 0.4, Uncertainty: "Unreadable dimensions"}}, Windows: []Opening{{ID: "window-1", Confidence: 0.2, Uncertainty: "Association unknown"}}, Features: []Feature{{ID: "stair-1", Type: FeatureStair, Label: "Stair", Origin: "manual", Disposition: "pending"}}}
 	if err := ValidateCandidate(candidate); err != nil {

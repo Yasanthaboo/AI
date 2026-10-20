@@ -34,6 +34,8 @@
 
 **Decision:** Leave existing QS formulas untouched. Material-only inputs are normalized to six decimal places under `finish-materials-v1`, then computed using standard-library rational arithmetic, with exact ceiling and recorded waste/precision. Pure domain formulas plus one materials service/repository own budgets/catalog observations/comparisons; reuse Excelize for separate XLSX export.
 
+**Constitution amendment 1.6.0 (owner approval 2026-10-14):** Add separate traditional cement/sand and premix plaster consumption budgets, using only confirmed net plaster area and explicit reviewed inputs. Traditional mix requires thickness, volume parts, dry-volume factor, cement density and both pack sizes; premix requires product consumption per m² at recorded thickness and pack kg. No construction defaults or structural mix advice; these calculations do not change QS totals. Plaster price/source equivalence is not established by this amendment; current fixture offers remain paint/tile only.
+
 **Alternative rejected:** Repricing measured finish totals with product prices double-counts costs; a new decimal dependency or separate pricing microservice is unnecessary. Epsilon-based ceiling without a versioned precision rule can hide real additional pack requirements.
 
 **Risk/check:** Quantization below one-millionth of the material unit is explicit and must have boundary tests. Exact rational arithmetic cannot repair inaccurate source dimensions or product specifications; human-reviewed assumptions remain mandatory.

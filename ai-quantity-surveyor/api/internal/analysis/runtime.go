@@ -270,6 +270,7 @@ func (service *Service) runManaged(analyzer Analyzer, started Candidate, control
 		candidate.Rooms[index].Assumptions = nil
 	}
 	sanitizeBounds(&candidate)
+	NormalizeEngineEvidence(&candidate)
 	finished = candidate
 	finish(nil)
 }

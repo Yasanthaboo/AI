@@ -1,11 +1,11 @@
 # Planned Development and Verification: Feature 005
 
-**Status:** Foundation implementation in progress. Contracts, page preparation/Poppler packaging and pure material formulas have focused verification; customer-facing routes/UI, persistence/quotas and accuracy/release gates remain pending.
+**Status:** Sample implementation in progress. Selected-page review, material budgets, fixture comparison and separate export are integrated and verified. Holdout accuracy, operator catalog import, live suppliers, hosted/private-access approval and release gates remain pending.
 
 ## Setup
 
-1. Work on the existing `proposed-1.5.0-amendment` branch; do not create another feature branch or commit/push without approval.
-2. Read constitution 1.5.0, `spec.md`, `plan.md`, `research.md`, `data-model.md` and `contracts.md`. Next refine tasks and run consistency analysis before implementation.
+1. Continue on the current feature branch; do not create another branch or commit/push without approval.
+2. Read constitution 1.6.0, `spec.md`, `plan.md`, `research.md`, `data-model.md` and `contracts.md`. Continue implementing accepted scope and track external gates separately.
 3. Install existing frontend dependencies with `npm ci`. Configure PostgreSQL/provider secrets locally or in hosted environment settings; never paste keys/connection credentials into chat or commit them.
 4. Implement the API runtime Poppler dependency and verify its selected-page preparation tests. A raw Ollama PDF is not supported until this preprocessing slice is delivered. Use existing Compose for the target runtime; host binaries must be explicitly available if running Go outside Docker.
 5. After quota/lease implementation, configure nonsecret `PROVIDER_QUOTA_SCOPE`, `GEMINI_DAILY_CALL_LIMIT` and `OLLAMA_DAILY_CALL_LIMIT` consistently across API replicas, below your account allowances. Missing/zero limits disable dispatch; PostgreSQL quota availability is required. Do not assume these planned settings are implemented today. Call quotas limit attempts, not guaranteed monetary spend.
@@ -67,11 +67,21 @@ The normal Docker build still ends with the production API stage. The page-tests
 
 Test pre-acceptance invalid page/capacity/quota/configuration failures as HTTP errors without provider calls. Then accept an analysis with 202 and force a quota race or provider/preparation failure: polling must return HTTP 200 with AnalysisFailed and structured code/retryable/retryAt plus legacy errorMessage. Verify the UI stops polling, displays reset information and retains saved inputs. A quota-store outage must never dispatch; if terminal persistence is temporarily impossible, status reads may return 503 until lease-fenced failure/recovery succeeds. No later error changes the already accepted POST response.
 
+## Material Sample Verification
+
+The estimate workflow includes explicit paint/wall-tile/floor-tile allocation, reviewed recipe inputs, material waste, immutable budget versions and frozen source assumptions. Budgets require a verified confirmation revision and exact canonical drawing page/image digest. They do not alter QS quantities, finish costs or the existing estimate workbook. Price alternatives use fictional persisted Colombo observations only; preview is read-only and explicit Save revalidates selected observations. Tax and delivery are distinct nullable source states; unknown or excluded charges never become a complete delivered total. The separate material workbook exports frozen requirements, offers, sources and assumptions.
+
+The isolated sample stack passed `go test ./api/... -count=1`, `go vet ./api/...`, TypeScript, focused ESLint and all 26 Playwright tests. A guarded `surveyor_job_test` PostgreSQL test verifies concurrent material versions, failed-insert rollback, connection reopen and snapshot immutability after a newer observation. The browser and pricing tests call no suppliers or AI providers. These fictional fixtures imply no source approval or live price/stock claim.
+
+### Plaster Materials
+
+Constitution 1.6.0 ratifies traditional cement/sand and premix consumption budgets using confirmed net plaster area and explicitly reviewed inputs; no default recipe or construction recommendation is provided. The API capability defaults off and can be enabled with `SURVEYOR_ENABLE_PLASTER_MATERIALS=true`. The isolated `compose.test.yaml` stack opts in for browser tests. Price fixtures remain paint/tile only; real plaster offers require a separately approved source and equivalence policy. Formula tests are deterministic arithmetic checks, not engineering recommendations.
+
 ## Recorded Managed Integration (2026-10-14)
 
 - Managed runtime is wired in the API; page metadata/start/status/canonical-image routes and pre/post-202 errors have focused server tests. External engines require PostgreSQL and configured quota limits; memory-only server mode exposes demo only. Provider redirect replay is rejected by both adapters without altering prompts.
 - Guarded live PostgreSQL tests pass for canonical-source durability/immutability, concurrent quota limits and late completion rejection. Runtime/memory tests cover canonical provider input, quota no-dispatch, missing configuration and UTC rollover. All test databases are disposable and the live job test refuses database names outside the surveyor_job_test prefix.
-- All 24 Playwright tests pass against the edited web app and disposable API/PostgreSQL stack, without real AI keys. New cases cover selected PDF page, pending/original/confirmed values, canonical-image failure, mobile overflow, transient polling 503 and quota reset/identity. Screenshots were inspected; the confirmed 3D canvas has a nonblank pixel check. These tests do not measure extraction accuracy.
+- All 26 Playwright tests pass against the edited web app and disposable API/PostgreSQL stack, without real AI keys. Cases cover selected PDF page, pending/original/confirmed values, canonical-image failure, mobile overflow, transient polling 503 and quota reset/identity, plus material-budget restoration, no-write preview, incomplete charges, explicit save/export and informational-feature acknowledgement. Screenshots were inspected; the confirmed 3D canvas has a nonblank pixel check. These tests do not measure extraction accuracy.
 - `compose.test.yaml` isolates test infrastructure, with IPv4 API mapping default 18081 and origin `http://localhost:3002`. Ports 8081/localhost may be intercepted by IIS on this machine; never modify those unrelated services to run tests. Use a unique `docker compose -p` project and temporary `SURVEYOR_TEST_PASSWORD`; no customer volumes are attached. `PLAYWRIGHT_WEB_PORT=3002` selects the web port.
 - Launch the test web process with `NEXT_PUBLIC_API_URL=http://127.0.0.1:18081` set in that SAME process so a reused server cannot silently point to an older API. The API supports `PORT`; default remains 8080. Set `SURVEYOR_TEST_API_PORT` if another isolated port is needed.
-- Source evidence sanitization, correction auditing, full privacy/access rollout, holdout acquisition and material/price integration still require their unchecked tasks. The sample preview is not a confidential customer deployment.
+- Source evidence field filtering and correction/feature audit have focused coverage; full provider/evidence evaluation and privacy/access rollout remain pending. Catalog import/refresh, real supplier permission, holdout acquisition and hosted verification remain unchecked. Fictional material workflows are sample-only and not a confidential customer deployment.

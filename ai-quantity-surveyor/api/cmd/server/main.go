@@ -15,6 +15,7 @@ import (
 
 	"github.com/example/ai-quantity-surveyor/api/internal/analysis"
 	"github.com/example/ai-quantity-surveyor/api/internal/estimate"
+	"github.com/example/ai-quantity-surveyor/api/internal/materials"
 	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
 )
@@ -55,6 +56,7 @@ func main() {
 	var jobStore analysis.JobStore = analysis.NewMemoryJobStore()
 	durableJobs := false
 	estimateService := estimate.NewService(analysisService)
+	var materialRepository materials.Repository = materials.NewMemoryRepository()
 	if postgresService, ok := service.(*project.PostgresService); ok {
 		analysisRepository, repositoryErr := analysis.NewPostgresRepository(postgresService.DB())
 		if repositoryErr != nil {
@@ -68,6 +70,10 @@ func main() {
 			log.Fatal(repositoryErr)
 		}
 		estimateService = estimate.NewServiceWithRepository(analysisService, estimateRepository)
+		materialRepository, repositoryErr = materials.NewPostgresRepository(postgresService.DB())
+		if repositoryErr != nil {
+			log.Fatal(repositoryErr)
+		}
 	}
 	limits, quotaErr := providerLimitsFromEnvironment()
 	if quotaErr != nil {
@@ -92,6 +98,9 @@ func main() {
 	}
 	defer analysisService.Close()
 	mux := http.NewServeMux()
+	materialService := materials.NewService(estimateService, analysisService, service, materialRepository)
+	materialService.EnablePlasterMaterials(os.Getenv("SURVEYOR_ENABLE_PLASTER_MATERIALS") == "true")
+	registerMaterialHandlers(mux, service, materialService)
 	mux.HandleFunc("GET /health", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ok"})
@@ -146,19 +155,6 @@ func main() {
 	})
 	registerAnalysisHandlers(mux, service, analysisService)
 	registerConfirmationHandlers(mux, analysisService)
-	mux.HandleFunc("PUT /api/analyses/{id}/confirmed-data", func(writer http.ResponseWriter, request *http.Request) {
-		var candidate analysis.Candidate
-		if err := json.NewDecoder(request.Body).Decode(&candidate); err != nil {
-			writeError(writer, http.StatusBadRequest, "InvalidRequest", "request body must be valid analysis data", false)
-			return
-		}
-		confirmed, err := analysisService.Confirm(request.PathValue("id"), candidate)
-		if err != nil {
-			writeError(writer, http.StatusBadRequest, "ValidationError", err.Error(), false)
-			return
-		}
-		writeJSON(writer, http.StatusOK, confirmed)
-	})
 	mux.HandleFunc("POST /api/projects/{id}/estimates", func(writer http.ResponseWriter, request *http.Request) {
 		var input estimate.Request
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
@@ -427,6 +423,19 @@ func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses
 }
 
 func registerConfirmationHandlers(mux *http.ServeMux, analysisService *analysis.Service) {
+	mux.HandleFunc("PUT /api/analyses/{id}/confirmed-data", func(writer http.ResponseWriter, request *http.Request) {
+		var candidate analysis.Candidate
+		if err := json.NewDecoder(request.Body).Decode(&candidate); err != nil {
+			writeError(writer, http.StatusBadRequest, "InvalidRequest", "request body must be valid analysis data", false)
+			return
+		}
+		confirmed, err := analysisService.Confirm(request.PathValue("id"), candidate)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, "ValidationError", err.Error(), false)
+			return
+		}
+		writeJSON(writer, http.StatusOK, confirmed)
+	})
 	mux.HandleFunc("GET /api/analyses/{id}/confirmations", func(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusOK, append([]analysis.Confirmation{}, analysisService.Confirmations(request.PathValue("id"))...))
 	})

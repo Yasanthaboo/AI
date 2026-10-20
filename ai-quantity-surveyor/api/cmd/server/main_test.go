@@ -14,11 +14,72 @@ import (
 
 	"github.com/example/ai-quantity-surveyor/api/internal/analysis"
 	"github.com/example/ai-quantity-surveyor/api/internal/estimate"
+	"github.com/example/ai-quantity-surveyor/api/internal/materials"
 	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
 )
 
 type handlerPageProcessor struct{}
+
+func TestMaterialHandlersEnforceBoundaries(t *testing.T) {
+	projects := project.NewService()
+	created, err := projects.CreateProject(project.Details{Name: "Material route fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysisService := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerMaterialHandlers(mux, projects, materials.NewService(estimate.NewService(analysisService), analysisService, projects, materials.NewMemoryRepository()))
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return response
+	}
+	if response := call(http.MethodGet, "/api/material-offers?country=ZZ&city=Elsewhere", ""); response.Code != 200 || response.Body.String() != "[]\n" {
+		t.Fatalf("unsupported catalog location: %d %s", response.Code, response.Body.String())
+	}
+	if response := call(http.MethodGet, "/api/projects/foreign/material-budgets", ""); response.Code != 404 {
+		t.Fatalf("foreign project listed material versions: %d", response.Code)
+	}
+	if response := call(http.MethodPost, "/api/projects/"+created.ID+"/material-budgets", `{"estimateId":"foreign","allocations":[{"roomId":"room","trade":"paint","areaM2":100}]}`); response.Code != 400 || !strings.Contains(response.Body.String(), "InvalidRequest") {
+		t.Fatalf("client supplied a trusted area: %d %s", response.Code, response.Body.String())
+	}
+	oversized := `{"estimateId":"foreign","padding":"` + strings.Repeat("x", 65<<10) + `"}`
+	if response := call(http.MethodPost, "/api/projects/"+created.ID+"/material-budgets", oversized); response.Code != 413 {
+		t.Fatalf("oversized material body: %d %s", response.Code, response.Body.String())
+	}
+	if response := call(http.MethodPost, "/api/material-budgets/missing/comparisons/preview", `{"location":{"country":"LK","city":"Colombo"},"alternatives":[[]]}`); response.Code != 404 {
+		t.Fatalf("missing budget preview: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPlasterMaterialsRequireExplicitOptIn(t *testing.T) {
+	projects := project.NewService()
+	created, err := projects.CreateProject(project.Details{Name: "Proposal gate fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysisService := analysis.NewService(analysis.DemoAnalyzer{})
+	service := materials.NewService(estimate.NewService(analysisService), analysisService, projects, materials.NewMemoryRepository())
+	mux := http.NewServeMux()
+	registerMaterialHandlers(mux, projects, service)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return response
+	}
+	if response := call(http.MethodGet, "/api/material-capabilities", ""); response.Code != 200 || !strings.Contains(response.Body.String(), `"plasterMaterials":false`) {
+		t.Fatalf("proposal default: %d %s", response.Code, response.Body.String())
+	}
+	request := `{"estimateId":"unverified","allocations":[{"roomId":"room","trade":"plaster","recipe":{}}]}`
+	if response := call(http.MethodPost, "/api/projects/"+created.ID+"/material-budgets", request); response.Code != 409 || !strings.Contains(response.Body.String(), "PlasterMaterialsDisabled") {
+		t.Fatalf("unratified trade was accepted: %d %s", response.Code, response.Body.String())
+	}
+	service.EnablePlasterMaterials(true)
+	if response := call(http.MethodGet, "/api/material-capabilities", ""); response.Code != 200 || !strings.Contains(response.Body.String(), `"plasterMaterials":true`) {
+		t.Fatalf("proposal opt in not advertised: %d %s", response.Code, response.Body.String())
+	}
+}
 
 func (handlerPageProcessor) Metadata(context.Context, []byte, string) (analysis.PageMetadata, error) {
 	return analysis.PageMetadata{PageCount: 2, ContentType: "application/pdf"}, nil
@@ -216,9 +277,25 @@ func TestConfirmationReadHandlers(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	candidate.Rooms[0].Confidence = 1
-	candidate.Rooms[0].Uncertainty = ""
-	if _, err := service.Confirm(started.ID, candidate); err != nil {
+	candidate.Rooms[0].Uncertainty = "client override"
+	candidate.Rooms[0].Length.Value++
+	candidate.Corrections = []analysis.Correction{{EntityID: "forged", Field: "length", Origin: "user"}}
+	candidate.ReviewIssues = []analysis.ReviewIssue{{EntityID: "forged", Code: "Forged"}}
+	body, err := json.Marshal(candidate)
+	if err != nil {
 		t.Fatal(err)
+	}
+	confirmation := httptest.NewRecorder()
+	mux.ServeHTTP(confirmation, httptest.NewRequest(http.MethodPut, path, strings.NewReader(string(body))))
+	if confirmation.Code != http.StatusOK {
+		t.Fatalf("confirm status=%d body=%s", confirmation.Code, confirmation.Body.String())
+	}
+	var submitted analysis.Candidate
+	if err := json.Unmarshal(confirmation.Body.Bytes(), &submitted); err != nil {
+		t.Fatal(err)
+	}
+	if len(submitted.Corrections) != 1 || submitted.Corrections[0].EntityID != submitted.Rooms[0].ID || submitted.Corrections[0].Field != "length" || submitted.Rooms[0].Uncertainty == "client override" || len(submitted.ReviewIssues) != 0 {
+		t.Fatalf("confirmation route trusted client audit metadata: %+v", submitted)
 	}
 	for _, endpoint := range []string{path, path + "/1"} {
 		response := read(endpoint)

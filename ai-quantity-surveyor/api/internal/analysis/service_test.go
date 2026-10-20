@@ -2,13 +2,18 @@ package analysis
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/example/ai-quantity-surveyor/api/internal/domain"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestConfirmationCannotForgeSourceOrCorrections(t *testing.T) {
@@ -36,6 +41,204 @@ func TestConfirmationCannotForgeSourceOrCorrections(t *testing.T) {
 	}
 	if len(confirmed.Corrections) != 0 || confirmed.Error != nil || confirmed.Source.ImageDigest != "server-digest" {
 		t.Fatalf("client changed provenance: %+v", confirmed)
+	}
+}
+
+func TestConfirmationDerivesMeasurementAuditAndPreservesEvidence(t *testing.T) {
+	measure := func(value float64) *domain.Measurement {
+		return &domain.Measurement{Value: value, Unit: domain.UnitMeters}
+	}
+	original := Candidate{ID: "audit-analysis", FloorPlanID: "audit-floor", State: StateReady, Source: &Source{FloorPlanID: "audit-floor", PageNumber: 2}, ReviewIssues: []ReviewIssue{{EntityID: "room-1", Field: "width", Code: "NeedsReview", Message: "Review raw extraction"}}, Rooms: []Room{{ID: "room-1", Name: "Hall", Length: measure(4), Width: measure(3), WallHeight: measure(2.7), Confidence: 0.75, Uncertainty: "Engine uncertainty", Evidence: map[string]Evidence{"length": {AnalysisID: "audit-analysis", FloorPlanID: "audit-floor", PageNumber: 2, Origin: "engine", ObservedText: "4 m"}}}}}
+	service := NewService(DemoAnalyzer{})
+	service.results[original.ID] = original
+	editable, _ := service.Get(original.ID)
+	editable.Rooms[0].Length = measure(5)
+	editable.Rooms[0].Evidence["length"] = Evidence{Origin: "manual", ObservedText: "forged"}
+	if _, err := service.Confirm(original.ID, editable); err == nil || !strings.Contains(err.Error(), "invalid manual source evidence") {
+		t.Fatalf("invalid manual evidence was accepted: %v", err)
+	}
+	editable, _ = service.Get(original.ID)
+	editable.Rooms[0].Length = measure(5)
+	editable.ReviewIssues = []ReviewIssue{{EntityID: "room-1", Code: "Forged", Message: "Client supplied"}}
+	confirmed, err := service.Confirm(original.ID, editable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(confirmed.Corrections) != 1 || confirmed.Corrections[0].Field != "length" || string(confirmed.Corrections[0].OriginalValue) != `{"value":4,"unit":"m"}` || confirmed.Rooms[0].Evidence["length"].ObservedText != "4 m" {
+		t.Fatalf("audit or evidence wrong: %+v", confirmed)
+	}
+	if len(confirmed.ReviewIssues) != 1 || confirmed.ReviewIssues[0].Code != "NeedsReview" || confirmed.Rooms[0].Confidence != 0.75 || confirmed.Rooms[0].Uncertainty != "Engine uncertainty" {
+		t.Fatalf("client replaced engine review metadata: %+v", confirmed)
+	}
+	stored, _ := service.Get(original.ID)
+	if stored.Rooms[0].Length.Value != 4 {
+		t.Fatal("confirmation rewrote raw extraction")
+	}
+	confirmed.Rooms[0].Evidence["length"] = Evidence{ObservedText: "caller mutation"}
+	stored, _ = service.Get(original.ID)
+	if stored.Rooms[0].Evidence["length"].ObservedText != "4 m" {
+		t.Fatal("confirmation response shared raw engine evidence")
+	}
+}
+
+func TestConfirmationAcceptsOnlyBoundManualEvidenceAndPreservesOpeningMetadata(t *testing.T) {
+	measure := func(value float64) *domain.Measurement {
+		return &domain.Measurement{Value: value, Unit: domain.UnitMeters}
+	}
+	original := Candidate{ID: "manual-evidence-analysis", FloorPlanID: "manual-drawing", State: StateReady, Source: &Source{FloorPlanID: "manual-drawing", PageNumber: 3}, Rooms: []Room{{ID: "room", Name: "Hall", Length: measure(4), Width: measure(3), WallHeight: measure(2.7), Confidence: 0.7}}, Windows: []Opening{{ID: "window", RoomID: "room", Width: measure(1.2), Height: measure(1), Confidence: 0.6, Uncertainty: "Engine read uncertain"}}}
+	service := NewService(DemoAnalyzer{})
+	service.results[original.ID] = original
+	editable, _ := service.Get(original.ID)
+	confidence := 1.0
+	editable.Rooms[0].Confidence = confidence
+	editable.Rooms[0].Uncertainty = "client override"
+	editable.Rooms[0].Evidence = map[string]Evidence{"length": {AnalysisID: original.ID, FloorPlanID: original.FloorPlanID, PageNumber: 3, Region: &Bounds{X: 0.1, Y: 0.2, Width: 0.2, Height: 0.1}, ObservedText: "4 m", Origin: "manual"}}
+	editable.Windows[0].Confidence = confidence
+	editable.Windows[0].Uncertainty = "client override"
+	confirmed, err := service.Confirm(original.ID, editable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.Rooms[0].Confidence != 0.7 || confirmed.Rooms[0].Uncertainty != "" {
+		t.Fatalf("room engine confidence/uncertainty was changed: %+v", confirmed.Rooms[0])
+	}
+	if confirmed.Windows[0].Confidence != 0.6 || confirmed.Windows[0].Uncertainty != "Engine read uncertain" {
+		t.Fatalf("opening engine confidence/uncertainty was changed: %+v", confirmed.Windows[0])
+	}
+	manual := confirmed.Rooms[0].Evidence["length"]
+	if manual.Origin != "manual" || manual.AnalysisID != original.ID || manual.FloorPlanID != original.FloorPlanID || manual.PageNumber != 3 || manual.Confidence != nil || manual.Region == nil {
+		t.Fatalf("manual evidence was not source-bound: %+v", manual)
+	}
+	if len(confirmed.Corrections) != 1 || confirmed.Corrections[0].Field != "lengthEvidence" || string(confirmed.Corrections[0].OriginalValue) != "null" {
+		t.Fatalf("manual source mark was not audited: %+v", confirmed.Corrections)
+	}
+}
+
+func TestConfirmationRequiresFeatureReviewAndKeepsManualConfidenceUnknown(t *testing.T) {
+	measure := &domain.Measurement{Value: 4, Unit: domain.UnitMeters}
+	original := Candidate{ID: "feature-analysis", FloorPlanID: "drawing", State: StateReady, Rooms: []Room{{ID: "room", Name: "Hall", Length: measure, Width: measure, WallHeight: measure, Confidence: 1}}, Features: []Feature{{ID: "stair", Type: "stair", Label: "Stair", Origin: "engine", Disposition: "pending"}}}
+	service := NewService(DemoAnalyzer{})
+	service.results[original.ID] = original
+	editable, _ := service.Get(original.ID)
+	if _, err := service.Confirm(original.ID, editable); err == nil {
+		t.Fatal("pending feature confirmed")
+	}
+	editable.Features = nil
+	if _, err := service.Confirm(original.ID, editable); err == nil {
+		t.Fatal("omission bypassed feature review")
+	}
+	confidence := 1.0
+	editable.Features = []Feature{{ID: "stair", Type: "stair", Label: "Stair", Disposition: "removed"}, {ID: "balcony", Type: "balcony", Label: "Manual balcony", Disposition: "acknowledged", Confidence: &confidence}}
+	confirmed, err := service.Confirm(original.ID, editable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(confirmed.Corrections) != 2 || confirmed.Features[1].Origin != "manual" || confirmed.Features[1].Confidence != nil {
+		t.Fatalf("feature audit: %+v", confirmed)
+	}
+}
+
+func TestConfirmationIsNotPublishedWhenRevisionPersistenceFails(t *testing.T) {
+	measurement := &domain.Measurement{Value: 4, Unit: domain.UnitMeters}
+	original := Candidate{ID: "failed-audit-analysis", FloorPlanID: "drawing", State: StateReady, Rooms: []Room{{ID: "room", Name: "Hall", Length: measurement, Width: measurement, WallHeight: measurement, Confidence: 1}}}
+	repository := &revisionRepository{candidate: original, failConfirmation: true}
+	service := NewServiceWithRepository(DemoAnalyzer{}, repository)
+	pending, _ := service.Get(original.ID)
+	pending.Rooms[0].Length = &domain.Measurement{Value: 5, Unit: domain.UnitMeters}
+	if _, err := service.Confirm(original.ID, pending); err == nil {
+		t.Fatal("confirmation succeeded despite failed audit persistence")
+	}
+	if len(service.Confirmations(original.ID)) != 0 {
+		t.Fatal("failed revision was published in confirmation history")
+	}
+	if _, found := service.Confirmed(original.ID); found {
+		t.Fatal("failed revision became the confirmed result")
+	}
+	stored, found := service.Get(original.ID)
+	if !found || stored.Rooms[0].Length.Value != 4 {
+		t.Fatal("failed confirmation mutated the raw candidate")
+	}
+}
+
+func TestPostgresConfirmationAuditReopensAndLegacyConfirmationRemainsReadable(t *testing.T) {
+	connection := os.Getenv("SURVEYOR_JOB_TEST_DATABASE_URL")
+	if connection == "" {
+		t.Skip("disposable confirmation test database not configured")
+	}
+	parsed, err := url.Parse(connection)
+	if err != nil || !strings.HasPrefix(strings.TrimPrefix(parsed.Path, "/"), "surveyor_job_test") {
+		t.Fatal("confirmation tests require a disposable surveyor_job_test database")
+	}
+	open := func() (*sql.DB, *PostgresRepository) {
+		db, err := sql.Open("pgx", connection)
+		if err != nil {
+			t.Fatal("could not open disposable confirmation database")
+		}
+		db.SetMaxOpenConns(4)
+		repository, err := NewPostgresRepository(db)
+		if err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		return db, repository
+	}
+	db, repository := open()
+	original := Candidate{ID: "confirm-" + newID(), FloorPlanID: "drawing-" + newID(), State: StateReady, Source: &Source{FloorPlanID: "confirmation-drawing", PageNumber: 2, ImageDigest: "original-digest"}, ReviewIssues: []ReviewIssue{{EntityID: "room", Field: "length", Code: "Review", Message: "Check source"}}, Rooms: []Room{{ID: "room", Name: "Hall", Length: &domain.Measurement{Value: 4, Unit: domain.UnitMeters}, Width: &domain.Measurement{Value: 3, Unit: domain.UnitMeters}, WallHeight: &domain.Measurement{Value: 2.7, Unit: domain.UnitMeters}, Confidence: 0.75}}}
+	original.Source.FloorPlanID = original.FloorPlanID
+	if err := repository.Save(original, false); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	service := NewServiceWithRepository(DemoAnalyzer{}, repository)
+	pending, found := service.Get(original.ID)
+	if !found {
+		db.Close()
+		t.Fatal("raw PostgreSQL candidate unavailable")
+	}
+	pending.Rooms[0].Length = &domain.Measurement{Value: 5, Unit: domain.UnitMeters}
+	pending.Rooms[0].Confidence = 1
+	pending.ReviewIssues = []ReviewIssue{{EntityID: "forged", Code: "Forged"}}
+	confirmed, err := service.Confirm(original.ID, pending)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if confirmed.ConfirmationRevision != 1 || confirmed.Rooms[0].Confidence != 0.75 || len(confirmed.ReviewIssues) != 1 || confirmed.ReviewIssues[0].Code != "Review" || len(confirmed.Corrections) != 1 {
+		db.Close()
+		t.Fatalf("confirmation audit response: %+v", confirmed)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, repository = open()
+	defer db.Close()
+	stored, found := repository.ConfirmationRevision(original.ID, 1)
+	if !found || stored.Candidate.Rooms[0].Length.Value != 5 || stored.Candidate.Rooms[0].Confidence != 0.75 || stored.Candidate.Corrections[0].Field != "length" || stored.Candidate.ReviewIssues[0].Code != "Review" {
+		t.Fatalf("confirmation audit did not survive reconnect: %+v", stored)
+	}
+	legacy := Candidate{ID: "legacy-confirm-" + newID(), FloorPlanID: "legacy-drawing", State: StateReady, Rooms: []Room{{ID: "legacy-room", Name: "Legacy", Length: &domain.Measurement{Value: 4, Unit: domain.UnitMeters}, Width: &domain.Measurement{Value: 3, Unit: domain.UnitMeters}, WallHeight: &domain.Measurement{Value: 2.7, Unit: domain.UnitMeters}, Confidence: 1}}}
+	if err := repository.Save(legacy, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, repository = open()
+	legacySnapshot, found := repository.ConfirmationRevision(legacy.ID, 1)
+	if !found || legacySnapshot.Revision != 1 || legacySnapshot.Candidate.Rooms[0].Name != "Legacy" {
+		db.Close()
+		t.Fatalf("legacy confirmation migration/read failed: %+v", legacySnapshot)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEngineEvidenceRejectsUnsupportedFields(t *testing.T) {
+	candidate := Candidate{ID: "evidence-analysis", FloorPlanID: "drawing", Source: &Source{FloorPlanID: "drawing", PageNumber: 2}, Rooms: []Room{{ID: "room", Name: "Hall", Evidence: map[string]Evidence{"length": {AnalysisID: "evidence-analysis", FloorPlanID: "drawing", PageNumber: 2, Origin: "engine"}, "externalQuantity": {AnalysisID: "evidence-analysis", FloorPlanID: "drawing", PageNumber: 2, Origin: "engine"}}}}}
+	NormalizeEngineEvidence(&candidate)
+	if len(candidate.Rooms[0].Evidence) != 1 || candidate.Rooms[0].Evidence["length"].Origin != "engine" || len(candidate.ReviewIssues) != 1 || candidate.ReviewIssues[0].Code != "UnsupportedEvidence" {
+		t.Fatalf("unsupported provenance was retained: %+v", candidate)
 	}
 }
 
@@ -161,9 +364,10 @@ func TestConfirmPreservesDistinctPreviewRevisions(t *testing.T) {
 }
 
 type revisionRepository struct {
-	mu        sync.Mutex
-	candidate Candidate
-	snapshots []Confirmation
+	mu               sync.Mutex
+	candidate        Candidate
+	snapshots        []Confirmation
+	failConfirmation bool
 }
 
 func (repository *revisionRepository) Save(candidate Candidate, confirmed bool) error {
@@ -189,6 +393,9 @@ func (repository *revisionRepository) Confirmed(id string) (Candidate, bool) {
 func (repository *revisionRepository) SaveConfirmation(snapshot Confirmation) error {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	if repository.failConfirmation {
+		return errors.New("confirmation persistence failed")
+	}
 	copy, err := copyCandidate(snapshot.Candidate)
 	if err != nil {
 		return err

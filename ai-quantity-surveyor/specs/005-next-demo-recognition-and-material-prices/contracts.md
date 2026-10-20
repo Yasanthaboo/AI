@@ -1,6 +1,6 @@
 # Proposed Contracts: Recognition, Materials and Local Offers
 
-**Status:** T002 readiness recorded 2026-10-13. Optional analysis types, pure material calculation types and new estimate provenance fields have foundation implementation/tests; new routes/persistence/UI and full contract enforcement remain pending. Existing payloads stay readable; historical provenance is not invented.
+**Status:** T002 readiness recorded 2026-10-13; plaster material scope was added by constitution 1.6.0 on 2026-10-14. Analysis/material calculation types, persistence and estimate provenance have implementation/tests; supplier import/refresh, accuracy evidence and release gates remain pending. Existing payloads stay readable; historical provenance is not invented.
 
 ## Wire Conventions
 
@@ -64,11 +64,14 @@ Selection/zoom/pan/evidence highlights are client presentation state and never m
 
 ## Material Requirements
 
-- `MaterialRecipe`: versioned reviewed product inputs, category (`paint` or `tile`), specification/use, original units, source document/URL or manual assumption, coats/coverage where applicable, pack volume/coverage and waste percent. Values must be finite and applicable to the quantity unit.
+- `MaterialRecipe`: versioned reviewed product inputs for paint/tile and ratified plaster systems, specification/use, original units, source document/URL or explicit manual assumption, consumption/coats/coverage where applicable, pack size and waste percent. Values must be finite and applicable to the quantity unit. Plaster inputs are either reviewed traditional cement/sand specifications, volume parts, dry-volume factor, cement density, thickness and separate pack sizes, or a premix specification, thickness, kg/m² consumption and kg pack size. No recipe defaults are permitted.
 - `MaterialRequirement`: room/trade allocation, measured source quantity, base material amount, waste-adjusted required amount, number of whole packs, purchased amount, surplus, units and exclusions. Quantities are computed by Go, not accepted from AI/client totals.
 - Paint: `requiredLitres = paintAreaM2 * coats / coverageM2PerLitrePerCoat * (1 + wastePercent/100)`.
 - Tiles: `requiredM2 = flooringOrWallTileAreaM2 * (1 + wastePercent/100)`, with flooring explicitly selected as tile rather than automatically treating all flooring as tile.
-- Packs: `ceil(requiredAmount / packAmount)`; purchased = packs * pack amount; surplus = purchased - required. Aggregate across compatible allocations before rounding; distinct paint finishes/products cannot share packs automatically. Use deterministic numeric rounding rules tested at exact pack boundaries.
+- Traditional plaster base volume: `dryM3 = confirmedNetPlasterAreaM2 * (thicknessMm/1000) * dryVolumeFactor`. Base cement is `dryM3 * cementParts/(cementParts+sandParts) * cementDensityKgPerM3`; base sand is `dryM3 * sandParts/(cementParts+sandParts)`. Premix base quantity is `confirmedNetPlasterAreaM2 * reviewedConsumptionKgPerM2`; record thickness without multiplying it a second time.
+- Plaster uses only frozen server-side `NetPlasterArea`; traditional and premix systems are exclusive per room. Apply material waste once to each base amount. Reviewed ratios, density, thickness, consumption and pack sizes are required; do not provide construction defaults or mix-design advice.
+- Packs: `ceil(requiredAmount / packAmount)`; purchased = packs * pack amount; surplus = purchased - required. Aggregate across compatible allocations before rounding; distinct products cannot share packs automatically. Use deterministic numeric rounding rules tested at exact pack boundaries.
+- Formula `plaster-materials-v1` records the ratified plaster-specific consumption formulas and input provenance. It uses the same explicit six-decimal normalization and exact pack-ceiling policy; snapshots retain the reviewed recipe fields, component units, source area, waste and formula version.
 - `MaterialBudgetSnapshot`: immutable ID/version, project, estimate ID, source analysis/confirmation revision, frozen quantity result, formula/recipe versions, reviewed inputs, requirements, assumptions and creation timestamp. Source revisions must belong to the same project. Selected offers belong to separate comparison snapshots referencing this budget. Separate material-only result; existing estimate totals do not change.
 - New estimates add `sourceConfirmationRevision`, `sourceFloorPlanId` and optional source page/digest captured from the exact snapshot used for calculation. A budget-create input uses `{estimateId, materialWastePercent, allocations}`; each allocation identifies room, trade (`paint|wallTile|floorTile`), reviewed recipe/specification and compatibility group. All source quantities/provenance are loaded by the server, not supplied as client amounts. Material waste is finite 0-50; coats are positive integers and coverage/pack amounts positive finite values. Flooring is tile only when explicitly allocated.
 - Budget output retains requirements and calculation-ready immutable inputs, not selected mutable catalog references. Comparison snapshots store selected offers separately. Unknown historical revision produces 409 `SourceRevisionUnavailable`; user must create a traceable new estimate, not attach a new/latest revision to the old one.
@@ -114,6 +117,8 @@ Selection/zoom/pan/evidence highlights are client presentation state and never m
 ```
 
 ## Proposed API Surface
+
+`GET /api/material-capabilities` returns `{plasterMaterials: boolean}` to identify deployments where the ratified calculation feature is explicitly enabled. Disabled requests receive 409 `PlasterMaterialsDisabled`; default runtime configuration remains off until operators enable the already-tested feature.
 
 | Method | Route | Purpose |
 | --- | --- | --- |

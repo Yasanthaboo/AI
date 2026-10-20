@@ -1,6 +1,6 @@
 # Data Model: Feature 005
 
-**Status:** Planned additive model; no migrations or types implemented. Contract names are defined in `contracts.md`.
+**Status:** Additive model; estimate/budget/comparison persistence and plaster calculation types are implemented. Live product imports, freshness/refresh state and supplier/evaluation gates remain pending. Contract names are defined in `contracts.md`.
 
 ## Existing Data and Additive Fields
 
@@ -17,13 +17,13 @@
 | `analysis_source_images` | `analysis_id` primary key/FK to candidate | Original floor-plan ID, page, selection origin, digest, canonical width/height, image/png bytes, prepared timestamp. Written once; candidate completion cannot silently switch source. |
 | `provider_daily_usage` | primary key `(quota_scope, provider, utc_date)` | Persisted nonnegative reserved-call count; increment only below configured daily limit using DB UTC time. New day gets a new bucket; old audit rows persist. Shared across replicas. |
 | `provider_call_reservations` | opaque reservation ID; unique `(quota_scope, provider, analysis_id, attempt_id)` | Durable logical-attempt reservation, its UTC bucket, owner/token and dispatch-claim status. Repeated reservation is idempotent; a unique reservation never permits two outbound sends. No secret key or refund/automatic replay. |
-| `material_products` | product ID primary key; category/equivalence key indexes | Versioned reviewed specifications, pack/coverage inputs and source method. Referenced inputs are copied into budgets/comparisons, so catalog edits cannot mutate history. |
+| `material_products` | product ID primary key; category/equivalence key indexes | Planned versioned reviewed specifications, pack/coverage inputs and source method. Current fixtures cover paint/tile only. Referenced inputs are copied into budgets/comparisons, so catalog edits cannot mutate history. |
 | `material_price_observations` | observation ID primary key; product/branch/observed-time indexes | Immutable original price/currency, branch, location, source/method/time, availability and charge states. Numeric null remains unknown. Fixture origin persists. |
 | `material_refresh_status` | source/branch key | Last attempt/success/error and policy version. Separate from old observation times; initial sources are fixture/import only. |
 | `material_budget_versions` | ID primary key; unique `(project_id, version)`; estimate ID index | Immutable reviewed allocation/recipe/formula-version and frozen source result/provenance JSONB. FK project/estimate; source analysis/revision must match. |
 | `material_comparison_versions` | ID primary key; unique `(budget_id, version)` | Immutable selected offer copies, location/requirements/charges/conversions, warnings and known/null totals. FK budget; no update of parent budget on new selection. |
 
-Use typed indexed columns for identity/reference/version/time and JSONB for reproducible payloads, following existing repository conventions. Define explicit SQL checks for positive integer pages/versions and known status enum values where stored as columns; application validation covers payload fields and ownership. Finite numeric bounds and product/unit compatibility are validated before persistence. No generic unbounded URL-fetch record exists.
+Use typed indexed columns for identity/reference/version/time and JSONB for reproducible payloads, following existing repository conventions. Define explicit SQL checks for positive integer pages/versions and known status enum values where stored as columns; application validation covers payload fields and ownership. Finite numeric bounds and product/unit compatibility are validated before persistence. Plaster snapshots preserve reviewed inputs, confirmed `NetPlasterArea`, component units, waste and `plaster-materials-v1`; no prices or construction recommendations are inferred. No generic unbounded URL-fetch record exists.
 
 ## Relationships and Immutable Boundaries
 
@@ -48,6 +48,8 @@ Legacy source-image/page metadata is unknown. Legacy estimate revision is unknow
 ## Numeric and Privacy Policy
 
 Material-only normalization uses six decimal places followed by exact rational computation; preserve original reviewed input alongside normalized inputs/formula version. Pack counts are nonnegative integers, missing charges null, currency explicit, totals currency-rounded at defined basket boundary. Current QS float precision remains untouched.
+
+Traditional plaster uses reviewed confirmed net plaster area, thickness, cement:sand volume parts, dry-volume factor, cement density and component pack sizes; separately store cement kg and sand m³ requirements. Premix uses reviewed product consumption kg/m² and pack kg at the recorded thickness. No default mix, thickness, density, pack size or product-consumption values are supplied; calculations are not structural/construction guidance.
 
 Validate finite/range constraints before normalization and again afterward. Coverage/pack divisors must stay strictly positive; positive source quantities rounded to zero are precision errors, while excluded/genuine zero quantities remain valid zeros. Never persist a recipe whose divisor normalized to zero or substitute a hidden minimum. Record field errors and verify values immediately below/at/above `0.0000005`. Provider quota dates/lease times use database UTC/time authority, not per-process clocks; quota scopes/ownership tokens contain no provider secrets and are not client-editable.
 

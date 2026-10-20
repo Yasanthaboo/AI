@@ -97,7 +97,7 @@ func (service *Service) Get(id string) (Candidate, bool) {
 	candidate, ok := service.results[id]
 	service.mu.RUnlock()
 	if !ok && service.repository != nil {
-		return service.repository.Get(id)
+		candidate, ok = service.repository.Get(id)
 	}
 	if !ok {
 		return Candidate{}, false
@@ -146,6 +146,9 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 	candidate.Error = nil
 	sanitizeBounds(&candidate)
 	sanitizeAssumptions(&candidate)
+	if err := confirmationAudit(original, &candidate); err != nil {
+		return Candidate{}, err
+	}
 	revision := len(service.snapshots[id]) + 1
 	if repository, ok := service.repository.(ConfirmationRepository); ok {
 		if latest, exists := repository.LatestConfirmation(id); exists && latest.Revision >= revision {
@@ -172,7 +175,7 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 			}
 		}
 	}
-	return candidate, nil
+	return copyCandidate(stored)
 }
 
 type ConfirmationRepository interface {

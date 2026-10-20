@@ -1,6 +1,6 @@
 # Requirements Checklist: Next Demo
 
-**Created:** 2026-10-13 | **Status:** Initial clarification pass complete; selected-page scope, recognition thresholds, dimension preview and Colombo/LKR pilot recorded. Suppliers explicitly deferred with labeled fixture/import fallback. Source approvals and release gates remain pending; this is document quality, not feature acceptance.
+**Created:** 2026-10-13 | **Status:** Initial clarification pass and constitution 1.6.0 amendment complete. Plaster formulas require reviewed values/no defaults; supplier approvals and release gates remain pending. This is document quality, not feature acceptance.
 
 ## Specification Quality
 
@@ -10,6 +10,7 @@
 - [x] Human confirmation and deterministic QS boundaries are preserved.
 - [x] Informational stairs/balconies are excluded from pricing and multi-floor reconstruction.
 - [x] Paint/tile material budgeting is separate from existing finish rates, with explicit waste, rounding, surplus and provenance.
+- [x] Constitution 1.6.0 plaster scope is separate from QS totals, uses confirmed net plaster area and reviewed traditional/premix inputs without defaults; supplier price coverage is not implied.
 - [x] Offers specify units/specification, location, currency, time, availability and unknown tax/delivery states.
 - [x] Permitted sources, caching, access controls, consent, failure behavior and fixture fallback are defined.
 - [x] Acceptance criteria map to tasks; unfinished implementation is not marked delivered.
@@ -25,7 +26,7 @@
 
 ## Blocking Decisions and Release Gates
 
-- [x] Ratify constitution amendment and align developer instructions before expanded implementation. Owner approved bounded P1-P3 scope on 2026-10-13; constitution 1.5.0 and development rules are synchronized.
+- [x] Ratify plaster-scope amendment on 2026-10-14; constitution 1.6.0, `.github/copilot-instructions.md`, US7/FR-016/AC-12 and formula/safety documentation are synchronized. Original constitution 1.5.0 P1-P3 scope was approved 2026-10-13.
 - [x] Approve pilot geography/currency: Colombo, Sri Lanka; LKR local-price comparisons, without changing existing USD-base QS estimates.
 - [ ] Identify/approve two or three sources and per-source automated access policy before live collection; use labeled fixtures/imports until then.
 - [ ] Approve product/spec equivalence, consumption inputs, price freshness and refresh limits.

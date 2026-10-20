@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { API, formatMoney, formatNumber, jsonInit, request, roomTotal, tradeCost, tradeQuantity, trades, versionRates, type Confirmation, type EstimateVersion, type Project, type RoomFinish, type ServerRates } from "./api";
 import { Assumptions, CompareVersions, CostCharts, FinishesEditor, describeFinish } from "./estimate-parts";
 import { currencies, type Settings } from "./settings";
+import MaterialBudgetPanel from "./material-budget";
 
 type Form = { rates: ServerRates; currency: string; exchangeRate: number };
 
@@ -171,6 +172,8 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
       <p className="muted small">Areas in m². Calculated {new Date(selected.calculatedAt).toLocaleString()} · version {selected.version}.</p>
 
       <Assumptions version={selected} confirmation={confirmation} />
+
+      <MaterialBudgetPanel key={selected.id} projectId={project.id} estimate={selected} />
 
       {estimates.length > 1 && <div className="version-list no-print"><h3 className="section-title">Versions</h3>
         <ul>{estimates.map((version) => <li key={version.id}><button type="button" className={`version-item${version.id === selected.id ? " version-item--active" : ""}`} onClick={() => setSelectedId(version.id)}>

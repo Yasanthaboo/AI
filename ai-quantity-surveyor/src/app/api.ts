@@ -139,6 +139,16 @@ export const trades = [
 ] as const;
 export type Trade = (typeof trades)[number];
 
+export type MaterialRecipe = { category: string; productId?: string; specification: string; coats?: number; coverageM2PerLitrePerCoat?: number; consumptionPerM2?: number; thicknessMm?: number; cementSpecification?: string; sandSpecification?: string; cementParts?: number; sandParts?: number; dryVolumeFactor?: number; cementDensityKgPerM3?: number; cementPackAmountKg?: number; sandPackAmountM3?: number; packAmount: number; packUnit: string; inputOrigin: string; sourceUrl?: string };
+export type MaterialAllocation = { roomId: string; trade: "paint" | "wallTile" | "floorTile" | "plaster" | "premixPlaster"; compatibilityGroup?: string; recipe: MaterialRecipe };
+export type MaterialRequirement = { id: string; roomIds: string[]; trade: MaterialAllocation["trade"] | "plasterCement" | "plasterSand"; recipe: MaterialRecipe; sourceAreaM2: number; baseAmount: number; requiredAmount: number; packCount: number; purchasedAmount: number; surplus: number; unit: string; formulaVersion: string };
+export type MaterialBudget = { id: string; projectId: string; version: number; estimateId: string; sourceAnalysisId: string; sourceConfirmationRevision: number; sourceFloorPlanId: string; sourcePageNumber: number; sourceImageDigest: string; materialWastePercent: number; allocations: MaterialAllocation[]; requirements: MaterialRequirement[]; createdAt: string };
+export type MaterialOffer = { id: string; supplier: string; branch: string; country: string; city: string; currency: string; price: number; recipe: MaterialRecipe; origin: string; observedAt: string; availability: string; taxIncluded: boolean | null; delivery: number | null };
+export type MaterialSelection = { requirementId: string; observationId: string };
+export type MaterialBasket = { items: { requirementId: string; offer: MaterialOffer; requirement: MaterialRequirement; subtotal: number }[]; materialSubtotal: number; knownDelivery: number; deliveredTotal: number | null; warnings: string[] };
+export type MaterialPreview = { budgetId: string; evaluatedAt: string; currency: string; alternatives: MaterialBasket[] };
+export type MaterialComparison = { id: string; budgetId: string; version: number; currency: string; basket: MaterialBasket; createdAt: string };
+
 export const tradeQuantity = (version: EstimateVersion, trade: Trade) => version.result[trade.quantity] ?? 0;
 export const tradeCost = (version: EstimateVersion, trade: Trade) => (version.result[trade.cost] ?? 0) * version.exchangeRate;
 export const roomTotal = (room: RoomCalculation) => room.totalCostUsd ?? room.plasterCostUsd + room.paintCostUsd;
