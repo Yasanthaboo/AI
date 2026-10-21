@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { API, formatMoney, formatNumber, jsonInit, request, roomTotal, tradeCost, tradeQuantity, trades, versionRates, type Confirmation, type EstimateVersion, type Project, type RoomFinish, type ServerRates } from "./api";
+import { API, authenticatedFetch, formatMoney, formatNumber, jsonInit, request, roomTotal, tradeCost, tradeQuantity, trades, versionRates, type Confirmation, type EstimateVersion, type Project, type RoomFinish, type ServerRates } from "./api";
 import { Assumptions, CompareVersions, CostCharts, FinishesEditor, describeFinish } from "./estimate-parts";
 import { currencies, type Settings } from "./settings";
 import MaterialBudgetPanel from "./material-budget";
@@ -86,7 +86,7 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
     setExporting(true);
     setError("");
     try {
-      const response = await fetch(`${API}/api/estimates/${selected.id}/export`);
+      const response = await authenticatedFetch(`${API}/api/estimates/${selected.id}/export`);
       if (!response.ok) throw new Error("Excel export failed.");
       download(await response.blob(), `${slug(project.name)}-estimate-v${selected.version}.xlsx`);
     } catch (failure) {
@@ -173,7 +173,7 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
 
       <Assumptions version={selected} confirmation={confirmation} />
 
-      <MaterialBudgetPanel key={selected.id} projectId={project.id} estimate={selected} />
+      <MaterialBudgetPanel key={selected.id} projectId={project.id} estimate={selected} settings={settings} />
 
       {estimates.length > 1 && <div className="version-list no-print"><h3 className="section-title">Versions</h3>
         <ul>{estimates.map((version) => <li key={version.id}><button type="button" className={`version-item${version.id === selected.id ? " version-item--active" : ""}`} onClick={() => setSelectedId(version.id)}>

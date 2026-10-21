@@ -13,13 +13,53 @@ import (
 	"time"
 
 	"github.com/example/ai-quantity-surveyor/api/internal/analysis"
+	"github.com/example/ai-quantity-surveyor/api/internal/auth"
 	"github.com/example/ai-quantity-surveyor/api/internal/estimate"
 	"github.com/example/ai-quantity-surveyor/api/internal/materials"
 	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
+	"github.com/example/ai-quantity-surveyor/api/internal/roomdesign"
 )
 
 type handlerPageProcessor struct{}
+
+func TestPortfolioHandlersIsolateProjectsByOwner(t *testing.T) {
+	store := project.NewService()
+	owned, err := store.CreateProjectForOwner(project.Details{Name: "User A project"}, "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := store.CreateProjectForOwner(project.Details{Name: "User B project"}, "user-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	analyses := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerPortfolioHandlers(mux, store, analyses, estimate.NewService(analyses))
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request = request.WithContext(auth.WithUser(request.Context(), auth.User{ID: "user-a"}))
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	var listed []portfolio.Summary
+	if response := call(http.MethodGet, "/api/projects", ""); response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed) != 1 || listed[0].Project.ID != owned.ID {
+		t.Fatalf("owner project list = %d %+v", response.Code, listed)
+	}
+	if response := call(http.MethodGet, "/api/projects/"+foreign.ID+"/summary", ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign project summary status = %d", response.Code)
+	}
+	if response := call(http.MethodPatch, "/api/projects/"+foreign.ID, `{"archived":true}`); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign project archive status = %d", response.Code)
+	}
+	if response := call(http.MethodPost, "/api/projects/"+foreign.ID+"/duplicate", ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign project duplicate status = %d", response.Code)
+	}
+	if current, _ := store.GetProject(foreign.ID); current.Archived {
+		t.Fatal("foreign project was modified")
+	}
+}
 
 func TestMaterialHandlersEnforceBoundaries(t *testing.T) {
 	projects := project.NewService()
@@ -50,6 +90,70 @@ func TestMaterialHandlersEnforceBoundaries(t *testing.T) {
 	}
 	if response := call(http.MethodPost, "/api/material-budgets/missing/comparisons/preview", `{"location":{"country":"LK","city":"Colombo"},"alternatives":[[]]}`); response.Code != 404 {
 		t.Fatalf("missing budget preview: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMaterialBudgetRoutesEnforceProjectOwnership(t *testing.T) {
+	projects := project.NewService()
+	owned, err := projects.CreateProjectForOwner(project.Details{Name: "Private material project"}, "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysisService := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerMaterialHandlers(mux, projects, materials.NewService(estimate.NewService(analysisService), analysisService, projects, materials.NewMemoryRepository()))
+	call := func(ownerID, method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request = request.WithContext(auth.WithUser(request.Context(), auth.User{ID: ownerID}))
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	foreignPath := "/api/projects/" + owned.ID + "/material-budgets"
+	if response := call("user-b", http.MethodGet, foreignPath, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign budget list status = %d", response.Code)
+	}
+	if response := call("user-b", http.MethodPost, foreignPath, `{}`); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign budget create status = %d", response.Code)
+	}
+	if response := call("user-a", http.MethodGet, foreignPath, ""); response.Code != http.StatusOK {
+		t.Fatalf("owner budget list status = %d", response.Code)
+	}
+}
+
+func TestRoomDesignRoutesEnforceProjectOwnership(t *testing.T) {
+	projects := project.NewService()
+	owned, err := projects.CreateProjectForOwner(project.Details{Name: "Design owner"}, "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := roomdesign.NewMemoryRepository()
+	concept := roomdesign.Concept{ID: "concept-a", ProjectID: owned.ID, AnalysisID: "analysis-a", ConfirmationRevision: 1, RoomID: "room-a", RoomName: "Kitchen", Style: "Contemporary", Palette: "Warm neutrals", Model: "test", CreatedAt: time.Now().UTC()}
+	if err := repository.SaveBatch(context.Background(), []roomdesign.Concept{concept}, [][]byte{[]byte("image bytes")}); err != nil {
+		t.Fatal(err)
+	}
+	service := roomdesign.NewService(projects, analysis.NewService(analysis.DemoAnalyzer{}), repository, nil, 0)
+	mux := http.NewServeMux()
+	registerRoomDesignHandlers(mux, projects, service)
+	call := func(ownerID, method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request = request.WithContext(auth.WithUser(request.Context(), auth.User{ID: ownerID}))
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	listPath := "/api/projects/" + owned.ID + "/rooms/room-a/designs?revision=1"
+	if response := call("user-b", http.MethodGet, listPath, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign room concepts status = %d", response.Code)
+	}
+	if response := call("user-b", http.MethodGet, "/api/room-designs/concept-a/image", ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign room image status = %d", response.Code)
+	}
+	if response := call("user-a", http.MethodGet, "/api/room-designs/concept-a/image", ""); response.Code != http.StatusOK || response.Body.String() != "image bytes" {
+		t.Fatalf("owner image response = %d %q", response.Code, response.Body.String())
+	}
+	if response := call("user-a", http.MethodPost, "/api/projects/"+owned.ID+"/rooms/room-a/designs", `{"roomId":"room-a","confirmationRevision":1,"style":"Contemporary","palette":"Warm neutrals","length":999}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("client-supplied room dimensions accepted: %d", response.Code)
 	}
 }
 
@@ -172,8 +276,9 @@ func TestManagedAnalysisHandlers(t *testing.T) {
 func TestProviderLimitsFromEnvironment(t *testing.T) {
 	t.Setenv("GEMINI_DAILY_CALL_LIMIT", "10")
 	t.Setenv("OLLAMA_DAILY_CALL_LIMIT", "0")
+	t.Setenv("NVIDIA_DAILY_CALL_LIMIT", "5")
 	limits, err := providerLimitsFromEnvironment()
-	if err != nil || limits["gemini"] != 10 || limits["ollama"] != 0 {
+	if err != nil || limits["gemini"] != 10 || limits["ollama"] != 0 || limits["nvidia"] != 5 {
 		t.Fatalf("limits: %v %v", limits, err)
 	}
 	t.Setenv("GEMINI_DAILY_CALL_LIMIT", "invalid")
@@ -248,12 +353,36 @@ func TestAcceptedQuotaFailureIsPolledWithoutProviderCall(t *testing.T) {
 }
 
 func TestConfirmationReadHandlers(t *testing.T) {
-	service := analysis.NewService(analysis.DemoAnalyzer{})
-	mux := http.NewServeMux()
-	registerConfirmationHandlers(mux, service)
-	started, err := service.Start("floor-1", []byte("drawing"), "plan.png")
+	store := project.NewService()
+	created, err := store.CreateProject(project.Details{Name: "Confirmation route fixture"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	floorPlan, err := store.SaveFloorPlan(created.ID, "plan.png", "image/png", []byte("\x89PNG\r\n\x1a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerAnalysisHandlers(mux, store, service)
+	registerConfirmationHandlers(mux, store, service)
+	started, err := service.Start(floorPlan.ID, []byte("drawing"), "plan.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignRead := httptest.NewRequest(http.MethodGet, "/api/analyses/"+started.ID, nil)
+	foreignRead = foreignRead.WithContext(auth.WithUser(foreignRead.Context(), auth.User{ID: "other-user"}))
+	foreignResponse := httptest.NewRecorder()
+	mux.ServeHTTP(foreignResponse, foreignRead)
+	if foreignResponse.Code != http.StatusNotFound {
+		t.Fatalf("foreign analysis read status = %d", foreignResponse.Code)
+	}
+	foreignPage := httptest.NewRequest(http.MethodGet, "/api/floor-plans/"+floorPlan.ID+"/pages", nil)
+	foreignPage = foreignPage.WithContext(auth.WithUser(foreignPage.Context(), auth.User{ID: "other-user"}))
+	foreignPageResponse := httptest.NewRecorder()
+	mux.ServeHTTP(foreignPageResponse, foreignPage)
+	if foreignPageResponse.Code != http.StatusNotFound {
+		t.Fatalf("foreign floor-plan metadata status = %d", foreignPageResponse.Code)
 	}
 	read := func(path string) *httptest.ResponseRecorder {
 		writer := httptest.NewRecorder()
@@ -320,8 +449,8 @@ func TestConfirmationReadHandlers(t *testing.T) {
 	if err := json.Unmarshal(read("/api/analyses/"+started.ID+"/confirmations").Body.Bytes(), &history); err != nil || len(history) != 1 || history[0].ConfirmedAt.IsZero() {
 		t.Fatalf("history = %+v, %v", history, err)
 	}
-	if body := read("/api/analyses/other/confirmations").Body.String(); strings.TrimSpace(body) != "[]" {
-		t.Fatalf("empty history body = %q", body)
+	if response := read("/api/analyses/other/confirmations"); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign analysis history status = %d", response.Code)
 	}
 }
 

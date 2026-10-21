@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API, formatDate, formatMoney, formatNumber, jsonInit, request, type EstimateVersion, type MaterialAllocation, type MaterialBudget, type MaterialComparison, type MaterialOffer, type MaterialPreview, type MaterialRecipe, type MaterialSelection } from "./api";
+import { authenticatedFetch, formatDate, formatMoney, formatNumber, jsonInit, request, type EstimateVersion, type MaterialAllocation, type MaterialBudget, type MaterialComparison, type MaterialOffer, type MaterialPreview, type MaterialRecipe, type MaterialSelection } from "./api";
+import type { Settings } from "./settings";
 
 const labels: Record<string, string> = { paint: "Paint", wallTile: "Wall tiles", floorTile: "Floor tiles", plaster: "Cement + sand plaster", plasterCement: "Cement", plasterSand: "Sand", premixPlaster: "Premixed plaster" };
 const initialPaint: MaterialRecipe = { category: "paint", specification: "Interior matt", coats: 2, coverageM2PerLitrePerCoat: 10, packAmount: 5, packUnit: "litre", inputOrigin: "manual" };
@@ -10,17 +11,17 @@ const emptyMix = { cementSpecification: "", sandSpecification: "", thicknessMm: 
 const emptyPremix = { specification: "", thicknessMm: "", consumptionPerM2: "", packAmount: "" };
 const positive = (value: string) => Number.isFinite(Number(value)) && Number(value) > 0;
 
-export default function MaterialBudgetPanel({ estimate, projectId }: { estimate: EstimateVersion; projectId: string }) {
+export default function MaterialBudgetPanel({ estimate, projectId, settings }: { estimate: EstimateVersion; projectId: string; settings: Settings }) {
   const [budgets, setBudgets] = useState<MaterialBudget[]>([]);
   const [budgetId, setBudgetId] = useState("");
   const [offers, setOffers] = useState<MaterialOffer[]>([]);
   const [plasterMaterialsEnabled, setPlasterMaterialsEnabled] = useState(false);
-  const [paint, setPaint] = useState(initialPaint);
-  const [tile, setTile] = useState(initialTile);
+  const [paint, setPaint] = useState<MaterialRecipe>(() => ({ ...initialPaint, coats: settings.materialDefaults.paintCoats, coverageM2PerLitrePerCoat: settings.materialDefaults.paintCoverageM2PerLitrePerCoat, packAmount: settings.materialDefaults.paintPackLitres }));
+  const [tile, setTile] = useState<MaterialRecipe>(() => ({ ...initialTile, packAmount: settings.materialDefaults.tilePackM2 }));
   const [wallTileSpecification, setWallTileSpecification] = useState("Wall tiles");
   const [plasterMix, setPlasterMix] = useState(emptyMix);
   const [premix, setPremix] = useState(emptyPremix);
-  const [waste, setWaste] = useState(10);
+  const [waste, setWaste] = useState(settings.materialDefaults.wastePercent);
   const [allocations, setAllocations] = useState<Record<string, boolean>>({});
   const [reviewed, setReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -94,6 +95,22 @@ export default function MaterialBudgetPanel({ estimate, projectId }: { estimate:
     catch (failure) { setError(failure instanceof Error ? failure.message : "Saved comparison unavailable."); }
   };
 
+  const exportComparison = async () => {
+    if (!saved) return;
+    setBusy(true); setError("");
+    try {
+      const response = await authenticatedFetch(`/api/material-comparisons/${encodeURIComponent(saved.id)}/export`);
+      if (!response.ok) throw new Error("Material comparison export failed.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "material-comparison.xlsx";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Material comparison export failed."); }
+    finally { setBusy(false); }
+  };
+
   return <section className="material-workspace no-print">
     <h3 className="section-title">Material-only budget</h3>
     <p className="muted small">Separate from finish-rate costs; plaster materials use confirmed net plaster area. Labour and the QS grand total are unchanged.</p>
@@ -148,15 +165,20 @@ export default function MaterialBudgetPanel({ estimate, projectId }: { estimate:
         <label className="field field--inline"><span>Comparison location</span><select aria-label="Supplier comparison location" value={locationChoice} onChange={(event) => { setLocationChoice(event.target.value); setPreview(null); setSaved(null); }}><option value="">Choose a comparison location</option><option value="LK/Colombo">Colombo, Sri Lanka</option></select></label>
         <button type="button" className="button button--secondary" disabled={busy || !locationChoice} onClick={compare}>Preview price alternatives</button>
       </> : <p className="alert alert--warning">No comparable fixture prices cover every positive material requirement. Price comparison is unavailable; no offers are inferred.</p>}
-      {fixturesCoverRequirements && preview?.alternatives.map((basket, index) => <div className="material-alternative" key={index}>
-        <h4>Option {index + 1} · {formatMoney(basket.materialSubtotal, "LKR")} material subtotal</h4>
-        {basket.items.map((item) => <p key={item.requirementId} className="small">{item.offer.supplier} · {item.requirement.packCount} packs · {formatMoney(item.offer.price, item.offer.currency)}/pack · {formatDate(item.offer.observedAt)} · {item.offer.availability} · tax {item.offer.taxIncluded === null ? "unknown" : item.offer.taxIncluded ? "included" : "excluded"} · delivery {item.offer.delivery === null ? "unknown" : formatMoney(item.offer.delivery, item.offer.currency)}</p>)}
-        <p className="small">Delivered total: {basket.deliveredTotal === null ? "Incomplete — unknown charges or stale observations" : formatMoney(basket.deliveredTotal, "LKR")}</p>
-        {basket.warnings.map((warning, warningIndex) => <p key={warningIndex} className="cell-note">{warning}</p>)}
+      {fixturesCoverRequirements && preview?.alternatives.map((basket, index) => <article className="material-alternative" key={index}>
+        <header className="material-alternative__heading"><div><span className="eyebrow">Option {index + 1}</span><h4>Material basket</h4></div><strong>{formatMoney(basket.materialSubtotal, "LKR")}<small>Material subtotal</small></strong></header>
+        <div className="material-offer-list">{basket.items.map((item) => <div className="material-offer" key={item.requirementId}>
+          <div><span className="material-offer__label">Supplier</span><strong>{item.offer.supplier}</strong></div>
+          <div><span className="material-offer__label">Quantity</span><strong>{item.requirement.packCount} packs</strong><small>{item.requirement.recipe.specification}</small></div>
+          <div><span className="material-offer__label">Price per pack</span><strong>{formatMoney(item.offer.price, item.offer.currency)}</strong><small>{formatDate(item.offer.observedAt)}</small></div>
+          <div><span className="material-offer__label">Availability</span><strong>{item.offer.availability}</strong><small>Tax {item.offer.taxIncluded === null ? "unknown" : item.offer.taxIncluded ? "included" : "excluded"} · delivery {item.offer.delivery === null ? "unknown" : formatMoney(item.offer.delivery, item.offer.currency)}</small></div>
+        </div>)}</div>
+        <div className="material-delivered-total"><span>Delivered total</span><strong>{basket.deliveredTotal === null ? "Incomplete: unknown charges or stale observations" : formatMoney(basket.deliveredTotal, "LKR")}</strong></div>
+        {basket.warnings.map((warning, warningIndex) => <p key={warningIndex} className="material-warning">{warning}</p>)}
         <button type="button" className="button button--ghost button--small" disabled={busy} onClick={() => save(index)}>Save option {index + 1}</button>
-      </div>)}
+      </article>)}
       <div className="material-saved-controls"><label className="field"><span>Saved comparison ID</span><input value={comparisonId} onChange={(event) => setComparisonId(event.target.value)} /></label><button type="button" className="button button--ghost button--small" disabled={!comparisonId} onClick={retrieve}>Open saved comparison</button></div>
-      {saved && <div className="material-saved" role="status"><strong>Saved material comparison v{saved.version}</strong><p>{formatMoney(saved.basket.materialSubtotal, saved.currency)} material subtotal · {saved.id}</p><a className="button button--secondary button--small" href={`${API}/api/material-comparisons/${encodeURIComponent(saved.id)}/export`}>Export material comparison</a></div>}
+      {saved && <div className="material-saved" role="status"><strong>Saved material comparison v{saved.version}</strong><p>{formatMoney(saved.basket.materialSubtotal, saved.currency)} material subtotal · {saved.id}</p><button type="button" className="button button--secondary button--small" disabled={busy} onClick={() => void exportComparison()}>Export material comparison</button></div>}
     </>}
     {error && <p role="alert" className="alert alert--error">{error}</p>}
   </section>;

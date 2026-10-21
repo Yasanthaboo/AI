@@ -12,6 +12,12 @@ services:
         value: "8080"
       - key: DATABASE_URL
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: INITIAL_ADMIN_USER_ID
+        sync: false
       - key: ALLOWED_ORIGIN
         sync: false
       - key: GEMINI_API_KEY
@@ -30,6 +36,26 @@ services:
         sync: false
       - key: OLLAMA_MODEL
         value: llama3.2-vision
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_NEMOTRON_MODEL
+        value: nvidia/nemotron-3.5-super-vl-120b-a12b
+      - key: NVIDIA_NIM_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: NVIDIA_DAILY_CALL_LIMIT
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ROOM_DESIGN_PROVIDER
+        value: openai
+      - key: OPENAI_IMAGE_MODEL
+        value: gpt-image-1
+      - key: NVIDIA_FLUX_MODEL
+        value: black-forest-labs/flux.1-dev
+      - key: NVIDIA_NIM_IMAGE_ENDPOINT
+        sync: false
+      - key: ROOM_DESIGN_DAILY_IMAGE_LIMIT
+        value: "4"
 
   - type: web
     name: ai-quantity-surveyor-web
@@ -48,3 +74,7 @@ services:
           type: web
           name: ai-quantity-surveyor-api
           envVarKey: RENDER_EXTERNAL_URL
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false

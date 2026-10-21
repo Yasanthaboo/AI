@@ -26,11 +26,41 @@ Feature 005 has managed job/source persistence, page/source-image APIs, dimensio
 
 ### Provider Quotas
 
-External providers require `DATABASE_URL`, their usual provider settings, a shared nonsecret `PROVIDER_QUOTA_SCOPE`, and positive `GEMINI_DAILY_CALL_LIMIT` / `OLLAMA_DAILY_CALL_LIMIT` values below the account allowance. Missing/zero quotas disable that provider; memory-only development mode is demo-only. Set these in the Render API service or local Compose environment and redeploy/recreate the API. Existing Render Blueprints must receive newly introduced variables manually in Environment settings; never send keys through chat. Call quotas do not guarantee a monetary spending cap.
+External analysis providers require `DATABASE_URL`, their usual provider settings, a shared nonsecret `PROVIDER_QUOTA_SCOPE`, and positive daily limits (`GEMINI_DAILY_CALL_LIMIT`, `OLLAMA_DAILY_CALL_LIMIT`, or `NVIDIA_DAILY_CALL_LIMIT`) below the account allowance. NVIDIA Nemotron analysis uses `NVIDIA_API_KEY`, `NVIDIA_NEMOTRON_MODEL` (default `nvidia/nemotron-3.5-super-vl-120b-a12b`), and `NVIDIA_NIM_BASE_URL` (default `https://integrate.api.nvidia.com/v1`). The API sends the prepared page PNG to the NVIDIA chat-completions endpoint and expects structured JSON output. External engines are hidden unless PostgreSQL, a shared quota scope, and a positive per-provider limit are configured. Set values only on the API service. Call quotas limit attempts, not guaranteed monetary spend.
+
+### Authentication
+
+The browser supports Supabase email/password signup and sign-in, Google OAuth, email verification, password reset/recovery, and sign-out. It reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` at server runtime and forwards session access tokens to the Go API. Configure both values on the web and API services. In Supabase Auth, enable Google and set the Site URL and allowed redirect URLs to the deployed web origin (and local development origin where needed).
+
+The Go API validates access tokens and scopes project, drawing, analysis, estimate, material-budget, comparison, and export routes to the authenticated user. PostgreSQL deployments also require `INITIAL_ADMIN_USER_ID`; startup assigns existing ownerless/local projects to that initial admin and refuses to start if migration fails. Keep deployment values out of source control. Local Compose and the isolated test Compose file explicitly allow anonymous development access; never enable this on a public deployment.
+
+The room Design Studio defaults to the API-only OpenAI image generator when `OPENAI_API_KEY` is configured; `OPENAI_IMAGE_MODEL` defaults to `gpt-image-1`. To use NVIDIA FLUX instead, set `ROOM_DESIGN_PROVIDER=nvidia`, `NVIDIA_API_KEY`, `NVIDIA_FLUX_MODEL`, and the exact `NVIDIA_NIM_IMAGE_ENDPOINT` shown for the enabled image model in your NVIDIA API Catalog. The Nemotron chat endpoint is separate and cannot generate images. `ROOM_DESIGN_DAILY_IMAGE_LIMIT` defaults to four generated images per user per UTC day. Each request generates two concepts from server-loaded confirmed room dimensions/openings plus user-selected style, palette, and preferences. Floor-plan files and source-image URLs are never sent to either image provider. Generated concept PNGs and their exact confirmation revision are stored with the project in PostgreSQL. Without a configured image provider the Design Studio remains visible after confirmation but generation is disabled.
+
+### Local Image Fallback (No API Fee)
+
+Room concepts can optionally fall back to a locally hosted image model, such as **SDXL base 1.0**, using [stable-diffusion.cpp's OpenAI-compatible image API](https://github.com/leejet/stable-diffusion.cpp/blob/master/examples/server/api.md). This works independently of Ollama text/vision models. Local inference has no cloud API fee, but requires suitable hardware, model weights downloaded separately, and compliance with the model licence; GPU, electricity, and hosting costs still apply.
+
+1. Install a compatible Windows `sd-server` build from stable-diffusion.cpp and obtain compatible SDXL weights. Start it with a model directory, for example `sd-server --model-dir C:\models --listen-port 1234`.
+2. Open its local UI at `http://localhost:1234`, select the SDXL recipe and matching model files, and load the model. Keep this unauthenticated server private; if Docker needs a host-interface binding, restrict access with the host firewall rather than exposing it publicly.
+3. Keep the existing NVIDIA or OpenAI primary provider and set these API environment variables:
+
+```dotenv
+ROOM_DESIGN_FALLBACK=local
+LOCAL_IMAGE_ENDPOINT=http://host.docker.internal:1234/v1/images/generations
+LOCAL_IMAGE_MODEL=sdxl-base-1.0
+```
+
+For a host-run Go API use `localhost` instead of `host.docker.internal`. The endpoint must use localhost, Docker's host alias, or a private IP address; redirects are rejected and cloud credentials are never forwarded. `LOCAL_IMAGE_MODEL` is a provenance label for the model loaded on that server, not a command to download or switch models. Use a label matching the actual loaded weights. The adapter requests two 1024x1024 PNGs with a 180-second local request timeout and validates image count, dimensions, decoding, and size before storage. Only confirmed room facts and preferences are sent, not floor-plan files.
+
+Fallback is opt-in and only runs on connection failures, timeouts, provider HTTP 429, or HTTP 5xx. It does not run after moderation blocks, authorization errors, TLS certificate errors, malformed images, or request cancellation. The existing application daily quota is checked once before either provider; fallback does not bypass that quota, refund reserved slots, or undo any primary-provider charges. A successful fallback replaces the whole concept pair, with `local/<configured model>` recorded on each concept. Local requests cannot embed the server's `sd_cpp_extra_args` control tags in preferences.
+
+For entirely local generation, set `ROOM_DESIGN_PROVIDER=local`, the same endpoint/model settings, and leave `ROOM_DESIGN_FALLBACK` empty. No OpenAI or NVIDIA key is required for that image provider. Leave both new options unset to preserve current behavior. No local server, model downloads, or live configuration changes are performed automatically. After configuring the local server, rebuild/recreate the API from the workspace parent with `docker compose -f ai-quantity-surveyor/compose.yaml up --build -d --no-deps api`.
 
 Canonical review images are served by `/api/analyses/{id}/source-image`; `/api/floor-plans/{id}/pages` returns page metadata. Analysis POST accepts optional `pageNumber`; the new PDF UI requires explicit selection, while omitted legacy requests use page 1. Once a start returns 202, stored failures are read through HTTP 200 status polling with error/retry metadata.
 
 The current Next.js scaffold is at the repository root so it can run immediately. The Go API starts with `go run ./api/cmd/server` from the repository root after changing into `api`, or with `go run ./cmd/server` from `api`.
+
+For host-only anonymous API development, explicitly set `AUTH_ALLOW_ANONYMOUS=true`; the normal local Compose file already sets it. Without Supabase credentials or this opt-in, the API refuses to start.
 
 ## Development
 

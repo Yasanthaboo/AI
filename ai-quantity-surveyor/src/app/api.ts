@@ -1,3 +1,5 @@
+import { currentAccessToken } from "./auth-client";
+
 export const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").replace(/\/$/, "");
 
 export type Measurement = { value: number; unit: string };
@@ -149,6 +151,9 @@ export type MaterialBasket = { items: { requirementId: string; offer: MaterialOf
 export type MaterialPreview = { budgetId: string; evaluatedAt: string; currency: string; alternatives: MaterialBasket[] };
 export type MaterialComparison = { id: string; budgetId: string; version: number; currency: string; basket: MaterialBasket; createdAt: string };
 
+export type RoomDesignCapability = { enabled: boolean; dailyImageLimit: number; styles: string[]; palettes: string[] };
+export type RoomDesignConcept = { id: string; projectId: string; analysisId: string; confirmationRevision: number; roomId: string; roomName: string; style: string; palette: string; preferences?: string; model: string; selected: boolean; createdAt: string };
+
 export const tradeQuantity = (version: EstimateVersion, trade: Trade) => version.result[trade.quantity] ?? 0;
 export const tradeCost = (version: EstimateVersion, trade: Trade) => (version.result[trade.cost] ?? 0) * version.exchangeRate;
 export const roomTotal = (room: RoomCalculation) => room.totalCostUsd ?? room.plasterCostUsd + room.paintCostUsd;
@@ -171,8 +176,15 @@ export class APIRequestFailure extends Error {
   }
 }
 
+export async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = await currentAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, init);
+  const response = await authenticatedFetch(`${API}${path}`, init);
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     let errorCode: string | undefined;
@@ -215,14 +227,14 @@ export function formatDate(value?: string) {
 }
 
 export async function fetchDrawing(floorPlan: FloorPlan): Promise<File> {
-  const response = await fetch(`${API}/api/floor-plans/${encodeURIComponent(floorPlan.id)}/file`);
+  const response = await authenticatedFetch(`${API}/api/floor-plans/${encodeURIComponent(floorPlan.id)}/file`);
   if (!response.ok) throw new Error("Drawing unavailable");
   const blob = await response.blob();
   return new File([blob], floorPlan.fileName, { type: blob.type });
 }
 
 export async function fetchSourceDrawing(analysisId: string, source: AnalysisSource, signal?: AbortSignal): Promise<File> {
-  const response = await fetch(`${API}/api/analyses/${encodeURIComponent(analysisId)}/source-image`, { signal });
+  const response = await authenticatedFetch(`${API}/api/analyses/${encodeURIComponent(analysisId)}/source-image`, { signal });
   if (!response.ok) throw new Error("Canonical source image unavailable");
   if (response.headers.get("ETag") !== `"${source.imageDigest}"`) throw new Error("Source image does not match this analysis");
   const blob = await response.blob();
@@ -237,7 +249,7 @@ export class AnalysisFailure extends Error {
   }
 }
 
-export const engineLabels: Record<string, string> = { demo: "Demo", ollama: "Ollama", gemini: "Google Gemini" };
+export const engineLabels: Record<string, string> = { demo: "Demo", ollama: "Ollama", gemini: "Google Gemini", nvidia: "NVIDIA Nemotron 3.5 Super VL" };
 
 // Starts an analysis and polls until it leaves the Analyzing state.
 export async function runAnalysis(floorPlanId: string, engine: string, isCancelled: () => boolean = () => false, pageNumber?: number): Promise<{ id: string; candidate: Candidate } | null> {

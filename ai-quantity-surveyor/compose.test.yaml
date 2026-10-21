@@ -19,6 +19,7 @@ services:
       DATABASE_URL: postgres://surveyor_test:${SURVEYOR_TEST_PASSWORD}@db:5432/surveyor_ui_test?sslmode=disable
       PORT: "8080"
       ALLOWED_ORIGIN: http://localhost:3002
+      AUTH_ALLOW_ANONYMOUS: "true"
       SURVEYOR_ENABLE_PLASTER_MATERIALS: "true"
     ports:
       - "127.0.0.1:${SURVEYOR_TEST_API_PORT:-18081}:8080"

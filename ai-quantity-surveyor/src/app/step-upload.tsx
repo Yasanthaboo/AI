@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import { AnalysisFailure, jsonInit, request, runAnalysis, type Candidate, type FloorPlan, type Project } from "./api";
+import type { Settings } from "./settings";
 
 type Stage = "idle" | "uploading" | "analyzing" | "preparing" | "error";
 export type { FloorPlan };
@@ -10,6 +11,7 @@ const engineInfo: Record<string, { label: string; detail: string }> = {
   demo: { label: "Demo", detail: "Sample four-room plan, instant" },
   ollama: { label: "Ollama", detail: "Local vision model" },
   gemini: { label: "Google Gemini", detail: "Cloud vision model, most accurate" },
+  nvidia: { label: "NVIDIA Nemotron 3.5 Super VL", detail: "NVIDIA NIM vision model" },
 };
 const stages: { key: Stage; label: string }[] = [
   { key: "uploading", label: "Upload drawing" },
@@ -26,6 +28,7 @@ function validate(file: File) {
 export default function UploadStep(props: {
   project: Project;
   engines: string[];
+  settings: Settings;
   file: File | null;
   floorPlan: FloorPlan | null;
   onFile: (file: File) => void;
@@ -34,8 +37,10 @@ export default function UploadStep(props: {
   onAnalyzed: (analysisId: string, candidate: Candidate) => void;
   onBack: () => void;
 }) {
-  const { project, engines, file, floorPlan } = props;
-  const [engine, setEngine] = useState(engines.includes("gemini") ? "gemini" : "demo");
+  const { project, engines, settings, file, floorPlan } = props;
+  const [engineChoice, setEngine] = useState<string | null>(null);
+  const preferredEngine = engineChoice ?? settings.analysis.preferredEngine;
+  const engine = preferredEngine === "demo" || engines.includes(preferredEngine) ? preferredEngine : engines.includes("gemini") ? "gemini" : "demo";
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);

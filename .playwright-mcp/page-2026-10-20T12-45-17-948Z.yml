@@ -1,0 +1,24 @@
+- generic [active] [ref=f8e1]:
+  - alert [ref=f8e2]
+  - main [ref=f8e3]:
+    - region [ref=f8e4]:
+      - generic [ref=f8e5]:
+        - generic [aria-hidden] [ref=f8e6]: QS
+        - paragraph [ref=f8e7]: AI Quantity Surveyor
+        - heading "Sign in" [level=1] [ref=f8e8]
+        - paragraph [ref=f8e9]: Your projects and drawings stay in your account.
+      - tablist "Account access" [ref=f8e10]:
+        - tab "Sign in" [selected] [ref=f8e11] [cursor=pointer]
+        - tab "Create account" [ref=f8e12] [cursor=pointer]
+      - button "Continue with Google" [ref=f8e13] [cursor=pointer]
+      - generic [ref=f8e14]: or use email
+      - generic [ref=f8e16]:
+        - generic [ref=f8e17]:
+          - generic [ref=f8e18]: Email
+          - textbox "Email" [ref=f8e19]
+        - generic [ref=f8e20]:
+          - generic [ref=f8e21]: Password
+          - textbox "Password" [ref=f8e22]
+        - button "Sign in" [ref=f8e23] [cursor=pointer]
+      - button "Forgot password?" [ref=f8e24] [cursor=pointer]
+      - paragraph [ref=f8e25]: By continuing, you agree to use project drawings only with services you have approved.

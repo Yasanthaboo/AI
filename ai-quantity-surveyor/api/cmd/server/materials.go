@@ -44,7 +44,7 @@ func registerMaterialHandlers(mux *http.ServeMux, projects project.Store, servic
 		writeJSON(writer, 200, map[string]bool{"plasterMaterials": service.PlasterMaterialsEnabled()})
 	})
 	mux.HandleFunc("POST /api/projects/{id}/material-budgets", func(writer http.ResponseWriter, request *http.Request) {
-		if _, found := projects.GetProject(request.PathValue("id")); !found {
+		if _, found := projectForRequest(projects, request, request.PathValue("id")); !found {
 			writeError(writer, 404, "NotFound", "Project not found.", false)
 			return
 		}
@@ -60,7 +60,7 @@ func registerMaterialHandlers(mux *http.ServeMux, projects project.Store, servic
 		writeJSON(writer, 201, budget)
 	})
 	mux.HandleFunc("GET /api/projects/{id}/material-budgets", func(writer http.ResponseWriter, request *http.Request) {
-		if _, found := projects.GetProject(request.PathValue("id")); !found {
+		if _, found := projectForRequest(projects, request, request.PathValue("id")); !found {
 			writeError(writer, 404, "NotFound", "Project not found.", false)
 			return
 		}
@@ -78,7 +78,7 @@ func registerMaterialHandlers(mux *http.ServeMux, projects project.Store, servic
 			writeMaterialError(writer, err)
 			return
 		}
-		if !found {
+		if !found || !projectOwnedByRequest(projects, request, budget.ProjectID) {
 			writeError(writer, 404, "NotFound", "Budget not found.", false)
 			return
 		}
@@ -106,6 +106,15 @@ func registerMaterialHandlers(mux *http.ServeMux, projects project.Store, servic
 		})
 	}
 	mux.HandleFunc("POST /api/material-budgets/{id}/comparisons/preview", func(writer http.ResponseWriter, request *http.Request) {
+		budget, found, err := service.GetBudget(request.Context(), request.PathValue("id"))
+		if err != nil {
+			writeMaterialError(writer, err)
+			return
+		}
+		if !found || !projectOwnedByRequest(projects, request, budget.ProjectID) {
+			writeError(writer, 404, "NotFound", "Material budget not found.", false)
+			return
+		}
 		var input materials.PreviewRequest
 		if !decodeMaterialBody(writer, request, &input) {
 			return
@@ -118,6 +127,15 @@ func registerMaterialHandlers(mux *http.ServeMux, projects project.Store, servic
 		writeJSON(writer, 200, preview)
 	})
 	mux.HandleFunc("POST /api/material-budgets/{id}/comparisons", func(writer http.ResponseWriter, request *http.Request) {
+		budget, found, err := service.GetBudget(request.Context(), request.PathValue("id"))
+		if err != nil {
+			writeMaterialError(writer, err)
+			return
+		}
+		if !found || !projectOwnedByRequest(projects, request, budget.ProjectID) {
+			writeError(writer, 404, "NotFound", "Material budget not found.", false)
+			return
+		}
 		var input materials.ComparisonRequest
 		if !decodeMaterialBody(writer, request, &input) {
 			return
@@ -135,13 +153,22 @@ func registerMaterialHandlers(mux *http.ServeMux, projects project.Store, servic
 			writeMaterialError(writer, err)
 			return
 		}
-		if !found {
+		if !found || !projectOwnedByRequest(projects, request, comparison.ProjectID) {
 			writeError(writer, 404, "NotFound", "Comparison not found.", false)
 			return
 		}
 		writeJSON(writer, 200, comparison)
 	})
 	mux.HandleFunc("GET /api/material-comparisons/{id}/export", func(writer http.ResponseWriter, request *http.Request) {
+		comparison, found, err := service.GetComparison(request.Context(), request.PathValue("id"))
+		if err != nil {
+			writeMaterialError(writer, err)
+			return
+		}
+		if !found || !projectOwnedByRequest(projects, request, comparison.ProjectID) {
+			writeError(writer, 404, "NotFound", "Comparison not found.", false)
+			return
+		}
 		content, err := service.Export(request.Context(), request.PathValue("id"))
 		if err != nil {
 			writeMaterialError(writer, err)

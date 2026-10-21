@@ -18,9 +18,14 @@ import (
 	"github.com/example/ai-quantity-surveyor/api/internal/materials"
 	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
+	"github.com/example/ai-quantity-surveyor/api/internal/roomdesign"
 )
 
 func main() {
+	verifier, ownerID, authErr := authConfigurationFromEnvironment()
+	if authErr != nil {
+		log.Fatal(authErr)
+	}
 	var service project.Store
 	var closeStore func() error
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
@@ -29,6 +34,9 @@ func main() {
 			log.Fatal(err)
 		}
 		service = postgresService
+		if err := service.AssignOwnerlessProjects(ownerID); err != nil {
+			log.Fatal(err)
+		}
 		closeStore = postgresService.Close
 	} else {
 		localService, err := project.NewPersistentService("data/projects.json")
@@ -36,6 +44,9 @@ func main() {
 			log.Fatal(err)
 		}
 		service = localService
+		if err := service.AssignOwnerlessProjects(ownerID); err != nil {
+			log.Fatal(err)
+		}
 	}
 	if closeStore != nil {
 		defer closeStore()
@@ -52,11 +63,20 @@ func main() {
 		engines["gemini"] = analysis.GeminiAnalyzer{APIKey: key, Model: os.Getenv("GEMINI_MODEL")}
 		availableEngines = append(availableEngines, "gemini")
 	}
+	if key := strings.TrimSpace(os.Getenv("NVIDIA_API_KEY")); key != "" {
+		nemotron, err := analysis.NewNvidiaNemotronAnalyzer(key, os.Getenv("NVIDIA_NEMOTRON_MODEL"), os.Getenv("NVIDIA_NIM_BASE_URL"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		engines["nvidia"] = nemotron
+		availableEngines = append(availableEngines, "nvidia")
+	}
 	analysisService := analysis.NewServiceWithEngines(analyzer, engines, nil)
 	var jobStore analysis.JobStore = analysis.NewMemoryJobStore()
 	durableJobs := false
 	estimateService := estimate.NewService(analysisService)
 	var materialRepository materials.Repository = materials.NewMemoryRepository()
+	var designRepository roomdesign.Repository = roomdesign.NewMemoryRepository()
 	if postgresService, ok := service.(*project.PostgresService); ok {
 		analysisRepository, repositoryErr := analysis.NewPostgresRepository(postgresService.DB())
 		if repositoryErr != nil {
@@ -74,6 +94,10 @@ func main() {
 		if repositoryErr != nil {
 			log.Fatal(repositoryErr)
 		}
+		designRepository, repositoryErr = roomdesign.NewPostgresRepository(postgresService.DB())
+		if repositoryErr != nil {
+			log.Fatal(repositoryErr)
+		}
 	}
 	limits, quotaErr := providerLimitsFromEnvironment()
 	if quotaErr != nil {
@@ -85,7 +109,7 @@ func main() {
 	}
 	availableEngines = []string{"demo"}
 	defaultEngine := "demo"
-	for _, engine := range []string{"ollama", "gemini"} {
+	for _, engine := range []string{"ollama", "gemini", "nvidia"} {
 		if engines[engine] != nil && limits[engine] > 0 && quotaScope != "" {
 			availableEngines = append(availableEngines, engine)
 			if engine == "ollama" {
@@ -93,6 +117,7 @@ func main() {
 			}
 		}
 	}
+	log.Printf("Configured analysis engines: %s", strings.Join(availableEngines, ", "))
 	if err := analysisService.EnableRuntime(analysis.RuntimeConfig{Jobs: jobStore, Preparer: analysis.NewPagePreparer(), QuotaScope: quotaScope, DailyLimits: limits, DefaultEngine: defaultEngine}); err != nil {
 		log.Fatal(err)
 	}
@@ -101,6 +126,12 @@ func main() {
 	materialService := materials.NewService(estimateService, analysisService, service, materialRepository)
 	materialService.EnablePlasterMaterials(os.Getenv("SURVEYOR_ENABLE_PLASTER_MATERIALS") == "true")
 	registerMaterialHandlers(mux, service, materialService)
+	designGenerator, designDailyLimit, designConfigErr := roomDesignConfigurationFromEnvironment()
+	if designConfigErr != nil {
+		log.Fatal(designConfigErr)
+	}
+	designService := roomdesign.NewService(service, analysisService, designRepository, designGenerator, designDailyLimit)
+	registerRoomDesignHandlers(mux, service, designService)
 	mux.HandleFunc("GET /health", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ok"})
@@ -114,7 +145,7 @@ func main() {
 			writeError(writer, http.StatusBadRequest, "InvalidRequest", "request body must be valid JSON", false)
 			return
 		}
-		created, err := service.CreateProject(input)
+		created, err := service.CreateProjectForOwner(input, requestOwnerID(request))
 		if err != nil {
 			writeError(writer, http.StatusBadRequest, "ValidationError", err.Error(), false)
 			return
@@ -122,7 +153,7 @@ func main() {
 		writeJSON(writer, http.StatusCreated, created)
 	})
 	mux.HandleFunc("GET /api/projects/{id}", func(writer http.ResponseWriter, request *http.Request) {
-		projectData, ok := service.GetProject(request.PathValue("id"))
+		projectData, ok := projectForRequest(service, request, request.PathValue("id"))
 		if !ok {
 			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
 			return
@@ -131,6 +162,10 @@ func main() {
 	})
 	registerPortfolioHandlers(mux, service, analysisService, estimateService)
 	mux.HandleFunc("POST /api/projects/{id}/floor-plan", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := projectForRequest(service, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
+			return
+		}
 		if err := request.ParseMultipartForm(project.MaxFloorPlanSize); err != nil {
 			writeError(writer, http.StatusBadRequest, "UploadFailed", "could not read uploaded floor plan", true)
 			return
@@ -154,11 +189,20 @@ func main() {
 		writeJSON(writer, http.StatusCreated, planned)
 	})
 	registerAnalysisHandlers(mux, service, analysisService)
-	registerConfirmationHandlers(mux, analysisService)
+	registerConfirmationHandlers(mux, service, analysisService)
 	mux.HandleFunc("POST /api/projects/{id}/estimates", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := projectForRequest(service, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
+			return
+		}
 		var input estimate.Request
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 			writeError(writer, http.StatusBadRequest, "InvalidRequest", "request body must be valid estimate data", false)
+			return
+		}
+		analysisProject, owned := analysisProjectForRequest(service, analysisService, request, input.AnalysisID)
+		if !owned || analysisProject.ID != request.PathValue("id") {
+			writeError(writer, http.StatusNotFound, "NotFound", "analysis not found", false)
 			return
 		}
 		created, err := estimateService.Create(request.PathValue("id"), input)
@@ -169,20 +213,26 @@ func main() {
 		writeJSON(writer, http.StatusCreated, created)
 	})
 	mux.HandleFunc("GET /api/projects/{id}/estimates", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := projectForRequest(service, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
+			return
+		}
 		writeJSON(writer, http.StatusOK, estimateService.List(request.PathValue("id")))
 	})
 	mux.HandleFunc("GET /api/estimates/{id}", func(writer http.ResponseWriter, request *http.Request) {
-		for _, projectID := range []string{} {
-			_ = projectID
-		}
 		result, ok := estimateService.GetByID(request.PathValue("id"))
-		if !ok {
+		if !ok || !projectOwnedByRequest(service, request, result.ProjectID) {
 			writeError(writer, http.StatusNotFound, "NotFound", "estimate not found", false)
 			return
 		}
 		writeJSON(writer, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /api/estimates/{id}/export", func(writer http.ResponseWriter, request *http.Request) {
+		version, ok := estimateService.GetByID(request.PathValue("id"))
+		if !ok || !projectOwnedByRequest(service, request, version.ProjectID) {
+			writeError(writer, http.StatusNotFound, "NotFound", "estimate not found", false)
+			return
+		}
 		workbook, err := estimateService.Export(request.PathValue("id"))
 		if err != nil {
 			writeError(writer, http.StatusNotFound, "ExportFailed", err.Error(), false)
@@ -199,7 +249,11 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("AI Quantity Surveyor API listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, withCORS(mux)); err != nil {
+	var handler http.Handler = mux
+	if verifier != nil {
+		handler = verifier.Middleware(handler)
+	}
+	if err := http.ListenAndServe(":"+port, withCORS(handler)); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -211,7 +265,7 @@ func withCORS(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		writer.Header().Set("Access-Control-Expose-Headers", "ETag, Retry-After")
 		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS")
 		if request.Method == http.MethodOptions {
@@ -224,7 +278,7 @@ func withCORS(next http.Handler) http.Handler {
 
 func providerLimitsFromEnvironment() (map[string]int, error) {
 	limits := make(map[string]int)
-	for engine, key := range map[string]string{"gemini": "GEMINI_DAILY_CALL_LIMIT", "ollama": "OLLAMA_DAILY_CALL_LIMIT"} {
+	for engine, key := range map[string]string{"gemini": "GEMINI_DAILY_CALL_LIMIT", "ollama": "OLLAMA_DAILY_CALL_LIMIT", "nvidia": "NVIDIA_DAILY_CALL_LIMIT"} {
 		value := os.Getenv(key)
 		if value == "" {
 			continue
@@ -240,7 +294,7 @@ func providerLimitsFromEnvironment() (map[string]int, error) {
 
 func registerAnalysisHandlers(mux *http.ServeMux, store project.Store, analyses *analysis.Service) {
 	loadDrawing := func(writer http.ResponseWriter, request *http.Request) (project.FloorPlan, []byte, bool) {
-		floorPlan, exists := store.GetFloorPlan(request.PathValue("id"))
+		floorPlan, exists := floorPlanForRequest(store, request, request.PathValue("id"))
 		if !exists {
 			writeError(writer, http.StatusNotFound, "NotFound", "floor plan not found", false)
 			return project.FloorPlan{}, nil, false
@@ -304,6 +358,10 @@ func registerAnalysisHandlers(mux *http.ServeMux, store project.Store, analyses 
 		writeJSON(writer, http.StatusAccepted, started)
 	})
 	mux.HandleFunc("GET /api/analyses/{id}", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := analysisProjectForRequest(store, analyses, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "analysis not found", false)
+			return
+		}
 		candidate, found, err := analyses.Read(request.Context(), request.PathValue("id"))
 		if err != nil {
 			writeAnalysisError(writer, err)
@@ -316,6 +374,10 @@ func registerAnalysisHandlers(mux *http.ServeMux, store project.Store, analyses 
 		writeJSON(writer, http.StatusOK, candidate)
 	})
 	mux.HandleFunc("GET /api/analyses/{id}/source-image", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := analysisProjectForRequest(store, analyses, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "analysis not found", false)
+			return
+		}
 		page, found, err := analyses.SourceImage(request.Context(), request.PathValue("id"))
 		if err != nil {
 			writeAnalysisError(writer, err)
@@ -362,7 +424,7 @@ func writeAnalysisError(writer http.ResponseWriter, failure error) {
 
 func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses *analysis.Service, estimates *estimate.Service) {
 	mux.HandleFunc("GET /api/projects", func(writer http.ResponseWriter, request *http.Request) {
-		projects := store.ListProjects()
+		projects := store.ListProjectsForOwner(requestOwnerID(request))
 		summaries := make([]portfolio.Summary, 0, len(projects))
 		for _, item := range projects {
 			summaries = append(summaries, portfolio.Summarize(store, analyses, estimates, item))
@@ -371,7 +433,7 @@ func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses
 		writeJSON(writer, http.StatusOK, summaries)
 	})
 	mux.HandleFunc("GET /api/projects/{id}/summary", func(writer http.ResponseWriter, request *http.Request) {
-		item, ok := store.GetProject(request.PathValue("id"))
+		item, ok := projectForRequest(store, request, request.PathValue("id"))
 		if !ok {
 			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
 			return
@@ -386,7 +448,7 @@ func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses
 			writeError(writer, http.StatusBadRequest, "InvalidRequest", `request body must be {"archived": true|false}`, false)
 			return
 		}
-		updated, err := store.SetArchived(request.PathValue("id"), *input.Archived)
+		updated, err := store.SetArchivedForOwner(request.PathValue("id"), requestOwnerID(request), *input.Archived)
 		if err != nil {
 			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
 			return
@@ -394,11 +456,11 @@ func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses
 		writeJSON(writer, http.StatusOK, updated)
 	})
 	mux.HandleFunc("POST /api/projects/{id}/duplicate", func(writer http.ResponseWriter, request *http.Request) {
-		if _, ok := store.GetProject(request.PathValue("id")); !ok {
+		if _, ok := projectForRequest(store, request, request.PathValue("id")); !ok {
 			writeError(writer, http.StatusNotFound, "NotFound", "project not found", false)
 			return
 		}
-		copied, err := project.Duplicate(store, request.PathValue("id"))
+		copied, err := project.DuplicateForOwner(store, request.PathValue("id"), requestOwnerID(request))
 		if err != nil {
 			writeError(writer, http.StatusInternalServerError, "DuplicateFailed", "project could not be duplicated", true)
 			return
@@ -406,7 +468,7 @@ func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses
 		writeJSON(writer, http.StatusCreated, copied)
 	})
 	mux.HandleFunc("GET /api/floor-plans/{id}/file", func(writer http.ResponseWriter, request *http.Request) {
-		floorPlan, ok := store.GetFloorPlan(request.PathValue("id"))
+		floorPlan, ok := floorPlanForRequest(store, request, request.PathValue("id"))
 		content, found := store.GetFile(request.PathValue("id"))
 		// Serve by the validated extension, never the client-supplied content type.
 		contentType := map[string]string{".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}[strings.ToLower(filepath.Ext(floorPlan.FileName))]
@@ -422,8 +484,12 @@ func registerPortfolioHandlers(mux *http.ServeMux, store project.Store, analyses
 	})
 }
 
-func registerConfirmationHandlers(mux *http.ServeMux, analysisService *analysis.Service) {
+func registerConfirmationHandlers(mux *http.ServeMux, store project.Store, analysisService *analysis.Service) {
 	mux.HandleFunc("PUT /api/analyses/{id}/confirmed-data", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := analysisProjectForRequest(store, analysisService, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "analysis not found", false)
+			return
+		}
 		var candidate analysis.Candidate
 		if err := json.NewDecoder(request.Body).Decode(&candidate); err != nil {
 			writeError(writer, http.StatusBadRequest, "InvalidRequest", "request body must be valid analysis data", false)
@@ -437,9 +503,17 @@ func registerConfirmationHandlers(mux *http.ServeMux, analysisService *analysis.
 		writeJSON(writer, http.StatusOK, confirmed)
 	})
 	mux.HandleFunc("GET /api/analyses/{id}/confirmations", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := analysisProjectForRequest(store, analysisService, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "analysis not found", false)
+			return
+		}
 		writeJSON(writer, http.StatusOK, append([]analysis.Confirmation{}, analysisService.Confirmations(request.PathValue("id"))...))
 	})
 	mux.HandleFunc("GET /api/analyses/{id}/confirmed-data", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := analysisProjectForRequest(store, analysisService, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "analysis not found", false)
+			return
+		}
 		result, ok := analysisService.LatestConfirmation(request.PathValue("id"))
 		if !ok {
 			writeError(writer, http.StatusNotFound, "NotFound", "confirmed analysis not found", false)
@@ -448,6 +522,10 @@ func registerConfirmationHandlers(mux *http.ServeMux, analysisService *analysis.
 		writeJSON(writer, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /api/analyses/{id}/confirmed-data/{revision}", func(writer http.ResponseWriter, request *http.Request) {
+		if _, ok := analysisProjectForRequest(store, analysisService, request, request.PathValue("id")); !ok {
+			writeError(writer, http.StatusNotFound, "NotFound", "analysis not found", false)
+			return
+		}
 		revision, err := strconv.Atoi(request.PathValue("revision"))
 		if err != nil || revision < 1 {
 			writeError(writer, http.StatusBadRequest, "InvalidRequest", "revision must be a positive integer", false)

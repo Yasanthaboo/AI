@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LogOut, Moon, Settings as SettingsIcon, Sun } from "lucide-react";
+import { useAuth } from "./auth-provider";
+import { useTheme } from "./theme-provider";
 import { fetchDrawing, request, type Candidate, type Confirmation, type EstimateVersion, type FloorPlan, type Project, type ProjectSummary } from "./api";
 import Dashboard from "./dashboard";
 import { loadDrawing, saveDrawing } from "./drawing-store";
@@ -12,8 +15,9 @@ import ModelStep from "./step-model";
 import ProjectStep from "./step-project";
 import ReviewStep from "./step-review";
 import UploadStep from "./step-upload";
+import RoomDesignStudio from "./room-design-studio";
 
-type View = "dashboard" | "project" | "settings";
+type View = "dashboard" | "project" | "design-studio" | "settings";
 type StepKey = "overview" | "project" | "upload" | "review" | "model" | "estimate";
 type Session = { projectId: string };
 type Workspace = { project: Project; floorPlan: FloorPlan | null; analysisId: string; candidate: Candidate | null; confirmation: Confirmation | null; estimates: EstimateVersion[] };
@@ -59,6 +63,8 @@ async function loadFile(analysisId: string, floorPlan: FloorPlan | null) {
 }
 
 export default function Home() {
+  const { enabled, user, signOut } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [view, setView] = useState<View>("dashboard");
   const [returnView, setReturnView] = useState<View>("dashboard");
   const [step, setStep] = useState<StepKey>("project");
@@ -125,6 +131,15 @@ export default function Home() {
 
   const newProject = () => { clear(); setView("project"); setStep("project"); };
   const showSettings = () => { if (view !== "settings") setReturnView(view); setView("settings"); };
+  const leaveAccount = async () => {
+    setError("");
+    try {
+      await signOut();
+      clear();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not sign out.");
+    }
+  };
   const analyzed = (id: string, result: Candidate) => {
     setAnalysisId(id); setCandidate(result); setConfirmation(null); setEstimates([]);
     if (file) void saveDrawing(id, file).catch(() => {});
@@ -141,11 +156,16 @@ export default function Home() {
     <div className="app-top no-print">
       <header className="app-header">
         <div className="brand"><span className="brand__mark">QS</span><div><strong>AI Quantity Surveyor</strong><small>Interior finishes estimating</small></div></div>
-        {view === "project" && project && <div className="header-project"><span className="muted">Project</span><strong>{project.name}</strong>{project.client && <small>{project.client}</small>}</div>}
+        {(view === "project" || view === "design-studio") && project && <div className="header-project"><span className="muted">Project</span><strong>{project.name}</strong>{project.client && <small>{project.client}</small>}</div>}
         <nav className="header-nav" aria-label="Main">
           <button type="button" className={`nav-link${view === "dashboard" ? " nav-link--active" : ""}`} aria-current={view === "dashboard" ? "page" : undefined} onClick={() => { setError(""); setView("dashboard"); }}>Projects</button>
-          <button type="button" className={`nav-link${view === "settings" ? " nav-link--active" : ""}`} aria-current={view === "settings" ? "page" : undefined} onClick={showSettings}>Settings</button>
+          {project && confirmation && <button type="button" className={`nav-link${view === "design-studio" ? " nav-link--active" : ""}`} aria-current={view === "design-studio" ? "page" : undefined} onClick={() => { setError(""); setView("design-studio"); }}>Design Studio</button>}
         </nav>
+        <div className="header-actions">
+          <button type="button" className={`icon-button header-icon-button${view === "settings" ? " header-icon-button--active" : ""}`} aria-label="Settings" title="Settings" aria-current={view === "settings" ? "page" : undefined} onClick={showSettings}><SettingsIcon size={18} aria-hidden="true" /></button>
+          <button type="button" className="icon-button header-icon-button" aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onClick={toggleTheme}>{theme === "dark" ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}</button>
+          {enabled && <div className="account-controls"><span className="account-email" title={user?.email ?? "Signed in"}>{user?.email ?? "Signed in"}</span><button type="button" className="icon-button header-icon-button" aria-label="Sign out" title="Sign out" onClick={() => void leaveAccount()}><LogOut size={18} aria-hidden="true" /></button></div>}
+        </div>
       </header>
 
       {view === "project" && <nav className="stepper" aria-label="Workflow">
@@ -167,12 +187,13 @@ export default function Home() {
       {error && <p className="alert alert--error" role="alert">{error}</p>}
       {loading ? <div className="card step-card loading-card" role="status"><span className="spinner" aria-hidden /> Loading…</div> : <>
         {view === "dashboard" && <Dashboard onOpen={openProject} onNew={newProject} />}
-        {view === "settings" && <SettingsView settings={settings} onSaved={setSettings} onClose={() => setView(returnView === "settings" ? "dashboard" : returnView)} />}
+        {view === "settings" && <SettingsView settings={settings} engines={engines} onSaved={setSettings} onClose={() => setView(returnView === "settings" ? "dashboard" : returnView)} />}
+        {view === "design-studio" && project && confirmation && <RoomDesignStudio key={`${project.id}:${confirmation.revision}`} project={project} confirmation={confirmation} settings={settings} onBack={() => setView("project")} />}
         {view === "project" && <>
           {step === "overview" && project && <Overview project={project} floorPlan={floorPlan} file={file} analysisId={analysisId} candidate={candidate} confirmation={confirmation} estimates={estimates} engines={engines}
             onRerun={analyzed} onContinue={() => setStep(next.key)} continueLabel={`Continue: ${next.label}`} />}
           {step === "project" && <ProjectStep key={project?.id ?? "new"} project={project} onCreated={(created) => { setProject(created); setStep("upload"); }} onContinue={() => setStep("upload")} />}
-          {step === "upload" && project && <UploadStep project={project} engines={engines} file={file} floorPlan={floorPlan}
+          {step === "upload" && project && <UploadStep project={project} engines={engines} settings={settings} file={file} floorPlan={floorPlan}
             onFile={(selected) => { setFile(selected); resetAnalysis(); }}
             onProjectReplaced={(replacement) => { setProject(replacement); setFloorPlan(null); }}
             onFloorPlan={setFloorPlan}
