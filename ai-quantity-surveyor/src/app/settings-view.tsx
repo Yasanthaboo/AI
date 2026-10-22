@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Armchair, Boxes, Calculator, ScanLine } from "lucide-react";
-import { engineLabels, type ServerRates } from "./api";
+import { engineLabels, request, type AnalysisProvider, type RoomDesignCapability, type ServerRates } from "./api";
 import { currencies, defaultSettings, designPalettes, designStyles, saveSettings, units, type Settings } from "./settings";
 
 const rateFields: { key: keyof ServerRates; label: string; unit: string }[] = [
@@ -27,9 +27,17 @@ export default function SettingsView({ settings, engines, onSaved, onClose }: { 
   const [section, setSection] = useState<SettingsSection>("general");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [providers, setProviders] = useState<AnalysisProvider[]>([]);
+  const [imageCapabilities, setImageCapabilities] = useState<RoomDesignCapability | null>(null);
+  useEffect(() => {
+    let active = true;
+    request<AnalysisProvider[]>("/api/analysis-providers").then((result) => { if (active) setProviders(result); }).catch(() => {});
+    request<RoomDesignCapability>("/api/room-design-capabilities").then((result) => { if (active) setImageCapabilities(result); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   const setRate = (key: keyof ServerRates, value: string) => { setSaved(false); setDraft((current) => ({ ...current, rates: { ...current.rates, [key]: Number(value) } })); };
   const setMaterialDefault = (key: keyof Settings["materialDefaults"], value: string) => { setSaved(false); setDraft((current) => ({ ...current, materialDefaults: { ...current.materialDefaults, [key]: Number(value) } })); };
-  const availableEngines = Array.from(new Set(["demo", ...engines, draft.analysis.preferredEngine]));
+  const availableEngines = Array.from(new Set(["demo", ...engines, ...providers.map((entry) => entry.id), draft.analysis.preferredEngine]));
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -71,9 +79,10 @@ export default function SettingsView({ settings, engines, onSaved, onClose }: { 
     {section === "analysis" && <section className="settings-panel" aria-label="Analyzer settings">
       <h3 className="section-title">Default analyzer</h3><p className="muted small">Choose the starting engine on new drawings. The extraction remains subject to manual confirmation.</p>
       <label className="field"><span>Analysis engine</span><select value={draft.analysis.preferredEngine} onChange={(event) => { setSaved(false); setDraft((current) => ({ ...current, analysis: { preferredEngine: event.target.value } })); }}>
-        {availableEngines.map((engine) => <option key={engine} value={engine}>{engineLabels[engine] ?? engine}{engine !== "demo" && !engines.includes(engine) ? " (not configured)" : ""}</option>)}
+        {availableEngines.map((engine) => <option key={engine} value={engine} disabled={engine !== "demo" && !engines.includes(engine)}>{engineLabels[engine] ?? engine}{providers.find((entry) => entry.id === engine)?.model ? ` - ${providers.find((entry) => entry.id === engine)!.model}` : ""}{engine !== "demo" && !engines.includes(engine) ? " (unavailable)" : ""}</option>)}
       </select></label>
       <p className="muted small">Available engines are supplied by the API. NVIDIA Nemotron 3.5 Super VL requires an NVIDIA API key, positive daily call limit, and shared quota scope on the API service.</p>
+      {providers.length > 0 && <div className="provider-status-list">{providers.map((provider) => <div key={provider.id}><div><strong>{provider.label}</strong><span className="muted small">{provider.model || "No model configured"}</span></div><span className={`badge ${provider.enabled ? "badge--success" : "badge--warning"}`}>{provider.enabled ? "Enabled" : "Unavailable"}</span>{!provider.enabled && <p className="muted small">{provider.reason}</p>}</div>)}</div>}
     </section>}
 
     {section === "materials" && <section className="settings-panel" aria-label="Material costing settings">
@@ -88,6 +97,7 @@ export default function SettingsView({ settings, engines, onSaved, onClose }: { 
     </section>}
 
     {section === "design" && <section className="settings-panel" aria-label="Design studio settings">
+      {(imageCapabilities?.providers?.length ?? 0) > 0 && <><h3 className="section-title">Configured image providers</h3><div className="provider-status-list">{imageCapabilities!.providers!.map((provider) => <div key={provider.id}><div><strong>{provider.label}</strong><span className="muted small">{provider.model}</span></div><span className="badge">{provider.id === imageCapabilities!.defaultProvider ? "Server default" : "Configured"}</span></div>)}</div></>}
       <h3 className="section-title">Room concept defaults</h3><p className="muted small">Applied as starting choices in the Design Studio. Each generated concept remains attached to its confirmed room revision.</p>
       <div className="form-grid form-grid--three">
         <label className="field"><span>Interior style</span><select value={draft.designDefaults.style} onChange={(event) => { setSaved(false); setDraft((current) => ({ ...current, designDefaults: { ...current.designDefaults, style: event.target.value } })); }}>{designStyles.map((style) => <option key={style}>{style}</option>)}</select></label>

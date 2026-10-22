@@ -9,6 +9,40 @@ import (
 	"github.com/example/ai-quantity-surveyor/api/internal/roomdesign"
 )
 
+func selectableRoomDesignConfigurationFromEnvironment() (roomdesign.Generator, int, error) {
+	primary, limit, err := roomDesignConfigurationFromEnvironment()
+	if err != nil || primary == nil {
+		return primary, limit, err
+	}
+	defaultOption := roomdesign.DescribeGenerator(primary)
+	router := &roomdesign.ProviderGenerator{Default: defaultOption.ID, Options: []roomdesign.Provider{defaultOption}, Generators: map[string]roomdesign.Generator{defaultOption.ID: primary}}
+	add := func(generator roomdesign.Generator) {
+		option := roomdesign.DescribeGenerator(generator)
+		if _, exists := router.Generators[option.ID]; exists {
+			return
+		}
+		if fallback, ok := primary.(*roomdesign.FallbackGenerator); ok && option.ID != "local" {
+			generator = &roomdesign.FallbackGenerator{Primary: generator, Fallback: fallback.Fallback}
+		}
+		router.Options = append(router.Options, option)
+		router.Generators[option.ID] = generator
+	}
+	if key := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); key != "" {
+		add(roomdesign.NewOpenAIGenerator(key, os.Getenv("OPENAI_IMAGE_MODEL")))
+	}
+	if key, endpoint := strings.TrimSpace(os.Getenv("NVIDIA_API_KEY")), strings.TrimSpace(os.Getenv("NVIDIA_NIM_IMAGE_ENDPOINT")); key != "" && endpoint != "" {
+		if generator, err := roomdesign.NewNvidiaFluxGenerator(key, os.Getenv("NVIDIA_FLUX_MODEL"), endpoint); err == nil {
+			add(generator)
+		}
+	}
+	if endpoint, model := strings.TrimSpace(os.Getenv("LOCAL_IMAGE_ENDPOINT")), strings.TrimSpace(os.Getenv("LOCAL_IMAGE_MODEL")); endpoint != "" && model != "" {
+		if generator, err := roomdesign.NewLocalImageGenerator(endpoint, model); err == nil {
+			add(generator)
+		}
+	}
+	return router, limit, nil
+}
+
 func roomDesignConfigurationFromEnvironment() (roomdesign.Generator, int, error) {
 	fallback := strings.ToLower(strings.TrimSpace(os.Getenv("ROOM_DESIGN_FALLBACK")))
 	if fallback != "" && fallback != "local" {

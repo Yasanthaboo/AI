@@ -41,7 +41,7 @@ func writeRoomDesignError(writer http.ResponseWriter, err error) {
 
 func registerRoomDesignHandlers(mux *http.ServeMux, projects project.Store, service *roomdesign.Service) {
 	mux.HandleFunc("GET /api/room-design-capabilities", func(writer http.ResponseWriter, request *http.Request) {
-		writeJSON(writer, http.StatusOK, map[string]any{"enabled": service.Enabled(), "dailyImageLimit": service.DailyLimit(), "styles": roomdesign.Styles(), "palettes": roomdesign.Palettes()})
+		writeJSON(writer, http.StatusOK, map[string]any{"enabled": service.Enabled(), "dailyImageLimit": service.DailyLimit(), "styles": roomdesign.Styles(), "palettes": roomdesign.Palettes(), "providers": service.Providers(), "defaultProvider": service.DefaultProvider()})
 	})
 	mux.HandleFunc("GET /api/projects/{id}/rooms/{roomId}/designs", func(writer http.ResponseWriter, request *http.Request) {
 		projectID, roomID := request.PathValue("id"), request.PathValue("roomId")

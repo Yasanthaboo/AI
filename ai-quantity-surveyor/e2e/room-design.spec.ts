@@ -52,7 +52,7 @@ test("confirmed room design concepts can be generated, selected, and removed", a
     if (path === `/api/analyses/${candidate.id}/confirmed-data`) return route.fulfill({ json: confirmation });
     if (path === `/api/analyses/${candidate.id}/confirmations`) return route.fulfill({ json: [priorConfirmation, confirmation] });
     if (path === `/api/projects/${project.id}/estimates`) return route.fulfill({ json: [] });
-    if (path === "/api/room-design-capabilities") return route.fulfill({ json: { enabled: true, dailyImageLimit: 4, styles: ["Contemporary", "Scandinavian"], palettes: ["Warm neutrals", "Earth tones"] } });
+    if (path === "/api/room-design-capabilities") return route.fulfill({ json: { enabled: true, dailyImageLimit: 4, styles: ["Contemporary", "Scandinavian"], palettes: ["Warm neutrals", "Earth tones"], providers: [{ id: "nvidia", label: "NVIDIA FLUX", model: "flux-fixture" }, { id: "openai", label: "OpenAI Images", model: "gpt-image-1" }], defaultProvider: "nvidia" } });
     if (path === `/api/projects/${project.id}/rooms/${room.id}/designs` && request.method() === "GET") return route.fulfill({ json: savedConcepts });
     if (path === `/api/projects/${project.id}/rooms/${room.id}/designs` && request.method() === "POST") {
       generationPayload = request.postDataJSON();
@@ -106,6 +106,8 @@ test("confirmed room design concepts can be generated, selected, and removed", a
   await page.getByLabel("Design confirmation revision").selectOption("2");
   await expect(page.getByText("3.8 m", { exact: true })).toBeVisible();
   await page.getByLabel("Design confirmation revision").selectOption("3");
+  await expect(page.getByRole("combobox", { name: "Image provider and model", exact: true })).toHaveValue("nvidia");
+  await page.getByRole("combobox", { name: "Image provider and model", exact: true }).selectOption("openai");
 
   await page.getByLabel("Preferences Optional · 300 characters max").fill("Reading nook and hidden storage");
   await page.getByRole("button", { name: "Generate two concepts" }).click();
@@ -120,7 +122,7 @@ test("confirmed room design concepts can be generated, selected, and removed", a
   const downloadEvent = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download concept 1", exact: true }).click();
   expect((await downloadEvent).suggestedFilename()).toBe("kitchen-revision-3-concept-1.png");
-  expect(generationPayload).toMatchObject({ roomId: "kitchen", confirmationRevision: 3, style: "Contemporary", palette: "Warm neutrals", preferences: "Reading nook and hidden storage" });
+  expect(generationPayload).toMatchObject({ provider: "openai", roomId: "kitchen", confirmationRevision: 3, style: "Contemporary", palette: "Warm neutrals", preferences: "Reading nook and hidden storage" });
   await page.getByRole("button", { name: "Select design" }).first().click();
   await expect(page.locator(".design-concept--selected .badge")).toContainText("Selected");
   await page.getByRole("button", { name: "Remove" }).last().click();
@@ -135,6 +137,7 @@ test("NVIDIA Nemotron appears when the API advertises it", async ({ page }) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === "/api/account/plan") return route.fulfill({ json: studioAccount });
+    if (path === "/api/analysis-providers") return route.fulfill({ json: [{ id: "demo", label: "Demo", model: "demo", enabled: true }, { id: "ollama", label: "Ollama", model: "ollama-vision-fixture", enabled: false, reason: "Daily call limit is disabled." }, { id: "nvidia", label: "NVIDIA Nemotron", model: "nemotron-fixture", enabled: true }] });
     if (path === "/api/analysis-engines") return route.fulfill({ json: ["demo", "nvidia"] });
     if (path === "/api/projects" && request.method() === "GET") return route.fulfill({ json: [] });
     if (path === "/api/projects" && request.method() === "POST") return route.fulfill({ status: 201, json: { ...project, id: "nvidia-project" } });
@@ -147,6 +150,9 @@ test("NVIDIA Nemotron appears when the API advertises it", async ({ page }) => {
   await page.getByRole("button", { name: "Sign in", exact: true }).last().click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Analyzer", exact: true }).click();
+  await expect(page.locator(".provider-status-list > div").filter({ hasText: "Ollama" })).toContainText("ollama-vision-fixture");
+  await expect(page.locator(".provider-status-list > div").filter({ hasText: "Ollama" })).toContainText("Daily call limit is disabled.");
+  await expect(page.getByRole("combobox", { name: "Analysis engine", exact: true }).locator('option[value="ollama"]')).toHaveJSProperty("disabled", true);
   await page.getByRole("combobox", { name: "Analysis engine", exact: true }).selectOption("nvidia");
   await page.getByRole("button", { name: "Material costing", exact: true }).click();
   await page.getByLabel("Paint coats", { exact: false }).fill("3");

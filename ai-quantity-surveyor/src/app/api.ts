@@ -151,7 +151,9 @@ export type MaterialBasket = { items: { requirementId: string; offer: MaterialOf
 export type MaterialPreview = { budgetId: string; evaluatedAt: string; currency: string; alternatives: MaterialBasket[] };
 export type MaterialComparison = { id: string; budgetId: string; version: number; currency: string; basket: MaterialBasket; createdAt: string };
 
-export type RoomDesignCapability = { enabled: boolean; dailyImageLimit: number; styles: string[]; palettes: string[] };
+export type AnalysisProvider = { id: string; label: string; model: string; enabled: boolean; reason?: string };
+export type ImageProvider = { id: string; label: string; model: string };
+export type RoomDesignCapability = { enabled: boolean; dailyImageLimit: number; styles: string[]; palettes: string[]; providers?: ImageProvider[]; defaultProvider?: string };
 export type RoomDesignConcept = { id: string; projectId: string; analysisId: string; confirmationRevision: number; roomId: string; roomName: string; style: string; palette: string; preferences?: string; model: string; selected: boolean; createdAt: string };
 
 export const tradeQuantity = (version: EstimateVersion, trade: Trade) => version.result[trade.quantity] ?? 0;

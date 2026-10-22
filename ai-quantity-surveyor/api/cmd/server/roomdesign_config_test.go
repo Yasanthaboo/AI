@@ -57,6 +57,30 @@ func TestRoomDesignConfigurationRequiresKeyAndValidQuota(t *testing.T) {
 	}
 }
 
+func TestSelectableImageProvidersExposeConfiguredModels(t *testing.T) {
+	t.Setenv("ROOM_DESIGN_PROVIDER", "nvidia")
+	t.Setenv("ROOM_DESIGN_FALLBACK", "")
+	t.Setenv("ROOM_DESIGN_DAILY_IMAGE_LIMIT", "10")
+	t.Setenv("NVIDIA_API_KEY", "test-nvidia-key")
+	t.Setenv("NVIDIA_NIM_IMAGE_ENDPOINT", "https://images.example.test/flux")
+	t.Setenv("NVIDIA_FLUX_MODEL", "flux-fixture")
+	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("OPENAI_IMAGE_MODEL", "gpt-image-fixture")
+	t.Setenv("LOCAL_IMAGE_ENDPOINT", "")
+	generator, limit, err := selectableRoomDesignConfigurationFromEnvironment()
+	if err != nil || limit != 10 {
+		t.Fatalf("image configuration: %d %v", limit, err)
+	}
+	router, ok := generator.(*roomdesign.ProviderGenerator)
+	if !ok || router.Default != "nvidia" || len(router.Options) != 2 {
+		t.Fatalf("configured provider catalog: %+v", generator)
+	}
+	selected, err := router.Select("openai")
+	if err != nil || roomdesign.DescribeGenerator(selected).Model != "gpt-image-fixture" {
+		t.Fatal("configured OpenAI model is hidden")
+	}
+}
+
 func TestRoomDesignLocalFallbackConfiguration(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("NVIDIA_API_KEY", "")

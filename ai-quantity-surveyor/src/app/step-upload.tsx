@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
-import { AnalysisFailure, jsonInit, request, runAnalysis, type Candidate, type FloorPlan, type Project } from "./api";
+import { AnalysisFailure, jsonInit, request, runAnalysis, type AnalysisProvider, type Candidate, type FloorPlan, type Project } from "./api";
 import type { Settings } from "./settings";
 import { PlanGate, usePlans } from "./plans";
 
@@ -10,7 +10,7 @@ export type { FloorPlan };
 
 const engineInfo: Record<string, { label: string; detail: string }> = {
   demo: { label: "Demo", detail: "Sample four-room plan, instant" },
-  ollama: { label: "Ollama", detail: "Local vision model" },
+  ollama: { label: "Ollama", detail: "Local or hosted vision model" },
   gemini: { label: "Google Gemini", detail: "Cloud vision model, most accurate" },
   nvidia: { label: "NVIDIA Nemotron 3.5 Super VL", detail: "NVIDIA NIM vision model" },
 };
@@ -41,6 +41,7 @@ export default function UploadStep(props: {
 }) {
   const { can } = usePlans();
   const { project, engines, settings, file, floorPlan } = props;
+  const [providers, setProviders] = useState<AnalysisProvider[]>([]);
   const [engineChoice, setEngine] = useState<string | null>(null);
   const preferredEngine = engineChoice ?? settings.analysis.preferredEngine;
   const engine = !can("aiAnalysis") ? "demo" : preferredEngine === "demo" || engines.includes(preferredEngine) ? preferredEngine : engines.includes("gemini") ? "gemini" : "demo";
@@ -60,6 +61,11 @@ export default function UploadStep(props: {
   const selectedPage = pageChoice?.file === file ? pageChoice.number : undefined;
 
   useEffect(() => { cancelled.current = false; return () => { cancelled.current = true; }; }, []);
+  useEffect(() => {
+    let active = true;
+    request<AnalysisProvider[]>("/api/analysis-providers").then((result) => { if (active) setProviders(result); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     if (!file || file.type !== "application/pdf") return;
     let disposed = false;
@@ -159,11 +165,12 @@ export default function UploadStep(props: {
     <fieldset className="engine-options" disabled={busy}>
       <legend>Analysis engine</legend>
       {Object.entries(engineInfo).map(([key, info]) => {
+        const provider = providers.find((entry) => entry.id === key);
         const entitled = key === "demo" || can("aiAnalysis");
         const available = entitled && (key === "demo" || engines.includes(key));
         return <label key={key} className={`engine-option${engine === key ? " engine-option--selected" : ""}${available ? "" : " engine-option--disabled"}`}>
           <input type="radio" name="engine" value={key} checked={engine === key} disabled={!available} onChange={() => setEngine(key)} />
-          <span><strong>{info.label}</strong><small>{!entitled ? "Pro or Studio required" : available ? info.detail : "Not configured on the server"}</small></span>
+          <span><strong>{info.label}</strong>{provider?.model && <small>{provider.model}</small>}<small>{!entitled ? "Pro or Studio required" : available ? info.detail : provider?.reason || "Not configured on the server"}</small></span>
         </label>;
       })}
     </fieldset>

@@ -170,7 +170,7 @@ func main() {
 	materialService := materials.NewService(estimateService, analysisService, service, materialRepository)
 	materialService.EnablePlasterMaterials(os.Getenv("SURVEYOR_ENABLE_PLASTER_MATERIALS") == "true")
 	registerMaterialHandlers(mux, service, materialService)
-	designGenerator, designDailyLimit, designConfigErr := roomDesignConfigurationFromEnvironment()
+	designGenerator, designDailyLimit, designConfigErr := selectableRoomDesignConfigurationFromEnvironment()
 	if designConfigErr != nil {
 		log.Fatal(designConfigErr)
 	}
@@ -182,6 +182,9 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/analysis-engines", func(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusOK, availableEngines)
+	})
+	mux.HandleFunc("GET /api/analysis-providers", func(writer http.ResponseWriter, request *http.Request) {
+		writeJSON(writer, http.StatusOK, analysisProviders(engines, limits, durableJobs, quotaScope))
 	})
 	mux.HandleFunc("POST /api/projects", func(writer http.ResponseWriter, request *http.Request) {
 		var input project.Details

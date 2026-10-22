@@ -35,6 +35,7 @@ func fail(status int, code, message string) error {
 }
 
 type Request struct {
+	Provider             string `json:"provider,omitempty"`
 	RoomID               string `json:"roomId"`
 	ConfirmationRevision int    `json:"confirmationRevision"`
 	Style                string `json:"style"`
@@ -115,6 +116,16 @@ func (service *Service) Generate(ctx context.Context, ownerID, projectID string,
 	if input.ConfirmationRevision < 1 || strings.TrimSpace(input.RoomID) == "" || !validChoice(input.Style, styles) || !validChoice(input.Palette, palettes) || len(input.Preferences) > 300 {
 		return nil, fail(400, "InvalidDesignRequest", "Choose a confirmed room, design style, and palette; preferences must be 300 characters or fewer.")
 	}
+	generator := service.generator
+	if router, ok := generator.(*ProviderGenerator); ok {
+		var err error
+		generator, err = router.Select(input.Provider)
+		if err != nil {
+			return nil, fail(400, "InvalidImageProvider", "Choose an available image provider.")
+		}
+	} else if input.Provider != "" && input.Provider != DescribeGenerator(generator).ID {
+		return nil, fail(400, "InvalidImageProvider", "Choose an available image provider.")
+	}
 	projectRecord, found := service.projects.GetProjectForOwner(projectID, ownerID)
 	if !found {
 		return nil, fail(404, "NotFound", "Project not found.")
@@ -151,7 +162,7 @@ func (service *Service) Generate(ctx context.Context, ownerID, projectID string,
 		}
 		return nil, fail(503, "DesignQuotaUnavailable", "Design generation quota is unavailable; retry later.")
 	}
-	images, err := service.generator.Generate(ctx, prompt, 2)
+	images, err := generator.Generate(ctx, prompt, 2)
 	if err != nil {
 		log.Printf("room design provider generation failed: %v", err)
 		return nil, fail(502, "DesignGenerationFailed", generationFailureMessage(err))

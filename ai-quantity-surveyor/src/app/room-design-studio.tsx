@@ -52,6 +52,7 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
   const rooms = activeConfirmation.candidate.rooms ?? emptyRooms;
   const [selectedRoomId, setSelectedRoomId] = useState(confirmation.candidate.rooms?.[0]?.id ?? "");
   const [capabilities, setCapabilities] = useState<RoomDesignCapability | null>(null);
+  const [providerChoice, setProviderChoice] = useState("");
   const [designCollection, setDesignCollection] = useState<{ key: string; concepts: RoomDesignConcept[] } | null>(null);
   const [style, setStyle] = useState(settings.designDefaults.style);
   const [palette, setPalette] = useState(settings.designDefaults.palette);
@@ -66,6 +67,8 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
   const windows = activeConfirmation.candidate.windows?.filter((opening) => opening.roomId === roomId) ?? [];
   const collectionKey = `${project.id}|${roomId}|${revision}`;
   const concepts = designCollection?.key === collectionKey ? designCollection.concepts : emptyConcepts;
+  const imageProviders = capabilities?.providers ?? [];
+  const provider = imageProviders.some((entry) => entry.id === providerChoice) ? providerChoice : capabilities?.defaultProvider ?? imageProviders[0]?.id ?? "";
 
   useEffect(() => {
     let active = true;
@@ -103,7 +106,7 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
     setBusy(true);
     setError("");
     try {
-      const generated = await request<RoomDesignConcept[]>(`/api/projects/${encodeURIComponent(project.id)}/rooms/${encodeURIComponent(room.id)}/designs`, jsonInit("POST", { roomId: room.id, confirmationRevision: revision, style, palette, preferences }));
+      const generated = await request<RoomDesignConcept[]>(`/api/projects/${encodeURIComponent(project.id)}/rooms/${encodeURIComponent(room.id)}/designs`, jsonInit("POST", { roomId: room.id, confirmationRevision: revision, style, palette, preferences, ...(provider ? { provider } : {}) }));
       setDesignCollection((current) => ({ key: collectionKey, concepts: [...generated, ...(current?.key === collectionKey ? current.concepts : [])] }));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Room concepts could not be generated.");
@@ -154,6 +157,7 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
           <div><dt>Wall height</dt><dd>{roundedMeasurement(room.wallHeight)}</dd></div>
           <div><dt>Openings</dt><dd>{doors.length} doors · {windows.length} windows</dd></div>
         </dl>}
+        {imageProviders.length > 0 && <label className="field"><span>Image provider and model</span><select aria-label="Image provider and model" value={provider} onChange={(event) => setProviderChoice(event.target.value)} disabled={!capabilities?.enabled || !can("designStudio") || busy}>{imageProviders.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}{entry.model ? ` - ${entry.model}` : ""}</option>)}</select></label>}
         <label className="field"><span>Interior style</span><select value={style} onChange={(event) => setStyle(event.target.value)} disabled={!capabilities?.enabled}>{(capabilities?.styles ?? []).map((entry) => <option key={entry}>{entry}</option>)}</select></label>
         <label className="field"><span>Color palette</span><select value={palette} onChange={(event) => setPalette(event.target.value)} disabled={!capabilities?.enabled}>{(capabilities?.palettes ?? []).map((entry) => <option key={entry}>{entry}</option>)}</select></label>
         <label className="field"><span>Preferences <small>Optional · 300 characters max</small></span><textarea rows={3} maxLength={300} value={preferences} onChange={(event) => setPreferences(event.target.value)} disabled={!capabilities?.enabled} placeholder="For example, reading nook and hidden storage" /></label>
