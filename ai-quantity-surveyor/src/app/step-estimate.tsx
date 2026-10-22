@@ -1,9 +1,11 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { API, formatMoney, formatNumber, jsonInit, request, roomTotal, tradeCost, tradeQuantity, trades, versionRates, type Confirmation, type EstimateVersion, type Project, type RoomFinish, type ServerRates } from "./api";
+import { API, authenticatedFetch, formatMoney, formatNumber, jsonInit, request, roomTotal, tradeCost, tradeQuantity, trades, versionRates, type Confirmation, type EstimateVersion, type Project, type RoomFinish, type ServerRates } from "./api";
 import { Assumptions, CompareVersions, CostCharts, FinishesEditor, describeFinish } from "./estimate-parts";
 import { currencies, type Settings } from "./settings";
+import MaterialBudgetPanel from "./material-budget";
+import { PlanGate, usePlans } from "./plans";
 
 type Form = { rates: ServerRates; currency: string; exchangeRate: number };
 
@@ -36,7 +38,7 @@ function csvCell(value: string | number) {
 
 const round = (value: number) => Number(value.toFixed(4));
 
-export default function EstimateStep({ project, analysisId, confirmation, estimates, settings, onEstimate, onBack }: {
+export default function EstimateStep({ project, analysisId, confirmation, estimates, settings, onEstimate, onBack, onViewPlans }: {
   project: Project;
   analysisId: string;
   confirmation: Confirmation;
@@ -44,7 +46,9 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
   settings: Settings;
   onEstimate: (version: EstimateVersion) => void;
   onBack: () => void;
+  onViewPlans: () => void;
 }) {
+  const { can } = usePlans();
   const latest = estimates[0];
   const [form, setForm] = useState<Form>(() => latest
     ? { rates: Object.fromEntries(Object.entries(versionRates(latest)).map(([key, value]) => [key, round(value)])) as ServerRates, currency: latest.targetCurrency, exchangeRate: latest.exchangeRate }
@@ -81,11 +85,12 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
   };
 
   const exportExcel = async () => {
+    if (!can("exports")) { setError("Exports require Pro or Studio."); return; }
     if (!selected) return;
     setExporting(true);
     setError("");
     try {
-      const response = await fetch(`${API}/api/estimates/${selected.id}/export`);
+      const response = await authenticatedFetch(`${API}/api/estimates/${selected.id}/export`);
       if (!response.ok) throw new Error("Excel export failed.");
       download(await response.blob(), `${slug(project.name)}-estimate-v${selected.version}.xlsx`);
     } catch (failure) {
@@ -96,6 +101,7 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
   };
 
   const exportCsv = () => {
+    if (!can("exports")) { setError("Exports require Pro or Studio."); return; }
     if (!selected) return;
     const rate = selected.exchangeRate;
     const money = `(${selected.targetCurrency})`;
@@ -113,7 +119,7 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
   return <section className="card step-card">
     <header className="step-header">
       <div><p className="eyebrow">Step 5</p><h2>Estimate</h2><p className="muted">Interior finishes quantities from confirmed dimensions. Each calculation is saved as a new version.</p></div>
-      {selected && <div className="export-actions no-print">
+      {selected && can("exports") && <div className="export-actions no-print">
         <button type="button" className="button button--secondary" onClick={exportExcel} disabled={exporting}>{exporting && <span className="spinner" aria-hidden />}Export Excel</button>
         <button type="button" className="button button--ghost" onClick={exportCsv}>Export CSV</button>
         <button type="button" className="button button--ghost" onClick={() => window.print()}>Print / PDF</button>
@@ -172,6 +178,9 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
 
       <Assumptions version={selected} confirmation={confirmation} />
 
+      {!can("exports") && <PlanGate feature="exports" onViewPlans={onViewPlans} />}
+      {can("materials") ? <MaterialBudgetPanel key={selected.id} projectId={project.id} estimate={selected} settings={settings} /> : <PlanGate feature="materials" onViewPlans={onViewPlans} />}
+
       {estimates.length > 1 && <div className="version-list no-print"><h3 className="section-title">Versions</h3>
         <ul>{estimates.map((version) => <li key={version.id}><button type="button" className={`version-item${version.id === selected.id ? " version-item--active" : ""}`} onClick={() => setSelectedId(version.id)}>
           <strong>v{version.version}</strong><span>{formatMoney(version.convertedGrandTotal, version.targetCurrency)}</span><small>{new Date(version.calculatedAt).toLocaleString()}</small>
@@ -180,6 +189,6 @@ export default function EstimateStep({ project, analysisId, confirmation, estima
       <CompareVersions key={estimates.length} versions={estimates} />
     </>}
 
-    <footer className="step-footer no-print"><button type="button" className="button button--ghost" onClick={onBack}>Back to model</button><span className="muted small">Excel export includes Summary, Rooms, Openings and Assumptions worksheets.</span></footer>
+    <footer className="step-footer no-print"><button type="button" className="button button--ghost" onClick={onBack}>{can("model3d") ? "Back to model" : "Back to review"}</button><span className="muted small">{can("exports") ? "Excel export includes Summary, Rooms, Openings and Assumptions worksheets." : "Basic estimates are included with Free."}</span></footer>
   </section>;
 }

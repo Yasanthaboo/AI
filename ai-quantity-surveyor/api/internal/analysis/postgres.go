@@ -24,6 +24,10 @@ func NewPostgresRepository(db *sql.DB) (*PostgresRepository, error) {
 		return nil, err
 	}
 	_, err = db.Exec(`ALTER TABLE analysis_confirmations ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ`)
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Exec(jobSchema)
 	return repository, err
 }
 

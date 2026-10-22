@@ -1,26 +1,388 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/example/ai-quantity-surveyor/api/internal/analysis"
+	"github.com/example/ai-quantity-surveyor/api/internal/auth"
 	"github.com/example/ai-quantity-surveyor/api/internal/estimate"
+	"github.com/example/ai-quantity-surveyor/api/internal/materials"
 	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
+	"github.com/example/ai-quantity-surveyor/api/internal/roomdesign"
 )
 
-func TestConfirmationReadHandlers(t *testing.T) {
-	service := analysis.NewService(analysis.DemoAnalyzer{})
-	mux := http.NewServeMux()
-	registerConfirmationHandlers(mux, service)
-	started, err := service.Start("floor-1", []byte("drawing"), "plan.png")
+type handlerPageProcessor struct{}
+
+func TestPortfolioHandlersIsolateProjectsByOwner(t *testing.T) {
+	store := project.NewService()
+	owned, err := store.CreateProjectForOwner(project.Details{Name: "User A project"}, "user-a")
 	if err != nil {
 		t.Fatal(err)
+	}
+	foreign, err := store.CreateProjectForOwner(project.Details{Name: "User B project"}, "user-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	analyses := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerPortfolioHandlers(mux, store, analyses, estimate.NewService(analyses))
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request = request.WithContext(auth.WithUser(request.Context(), auth.User{ID: "user-a"}))
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	var listed []portfolio.Summary
+	if response := call(http.MethodGet, "/api/projects", ""); response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed) != 1 || listed[0].Project.ID != owned.ID {
+		t.Fatalf("owner project list = %d %+v", response.Code, listed)
+	}
+	if response := call(http.MethodGet, "/api/projects/"+foreign.ID+"/summary", ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign project summary status = %d", response.Code)
+	}
+	if response := call(http.MethodPatch, "/api/projects/"+foreign.ID, `{"archived":true}`); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign project archive status = %d", response.Code)
+	}
+	if response := call(http.MethodPost, "/api/projects/"+foreign.ID+"/duplicate", ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign project duplicate status = %d", response.Code)
+	}
+	if current, _ := store.GetProject(foreign.ID); current.Archived {
+		t.Fatal("foreign project was modified")
+	}
+}
+
+func TestMaterialHandlersEnforceBoundaries(t *testing.T) {
+	projects := project.NewService()
+	created, err := projects.CreateProject(project.Details{Name: "Material route fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysisService := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerMaterialHandlers(mux, projects, materials.NewService(estimate.NewService(analysisService), analysisService, projects, materials.NewMemoryRepository()))
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return response
+	}
+	if response := call(http.MethodGet, "/api/material-offers?country=ZZ&city=Elsewhere", ""); response.Code != 200 || response.Body.String() != "[]\n" {
+		t.Fatalf("unsupported catalog location: %d %s", response.Code, response.Body.String())
+	}
+	if response := call(http.MethodGet, "/api/projects/foreign/material-budgets", ""); response.Code != 404 {
+		t.Fatalf("foreign project listed material versions: %d", response.Code)
+	}
+	if response := call(http.MethodPost, "/api/projects/"+created.ID+"/material-budgets", `{"estimateId":"foreign","allocations":[{"roomId":"room","trade":"paint","areaM2":100}]}`); response.Code != 400 || !strings.Contains(response.Body.String(), "InvalidRequest") {
+		t.Fatalf("client supplied a trusted area: %d %s", response.Code, response.Body.String())
+	}
+	oversized := `{"estimateId":"foreign","padding":"` + strings.Repeat("x", 65<<10) + `"}`
+	if response := call(http.MethodPost, "/api/projects/"+created.ID+"/material-budgets", oversized); response.Code != 413 {
+		t.Fatalf("oversized material body: %d %s", response.Code, response.Body.String())
+	}
+	if response := call(http.MethodPost, "/api/material-budgets/missing/comparisons/preview", `{"location":{"country":"LK","city":"Colombo"},"alternatives":[[]]}`); response.Code != 404 {
+		t.Fatalf("missing budget preview: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMaterialBudgetRoutesEnforceProjectOwnership(t *testing.T) {
+	projects := project.NewService()
+	owned, err := projects.CreateProjectForOwner(project.Details{Name: "Private material project"}, "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysisService := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerMaterialHandlers(mux, projects, materials.NewService(estimate.NewService(analysisService), analysisService, projects, materials.NewMemoryRepository()))
+	call := func(ownerID, method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request = request.WithContext(auth.WithUser(request.Context(), auth.User{ID: ownerID}))
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	foreignPath := "/api/projects/" + owned.ID + "/material-budgets"
+	if response := call("user-b", http.MethodGet, foreignPath, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign budget list status = %d", response.Code)
+	}
+	if response := call("user-b", http.MethodPost, foreignPath, `{}`); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign budget create status = %d", response.Code)
+	}
+	if response := call("user-a", http.MethodGet, foreignPath, ""); response.Code != http.StatusOK {
+		t.Fatalf("owner budget list status = %d", response.Code)
+	}
+}
+
+func TestRoomDesignRoutesEnforceProjectOwnership(t *testing.T) {
+	projects := project.NewService()
+	owned, err := projects.CreateProjectForOwner(project.Details{Name: "Design owner"}, "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := roomdesign.NewMemoryRepository()
+	concept := roomdesign.Concept{ID: "concept-a", ProjectID: owned.ID, AnalysisID: "analysis-a", ConfirmationRevision: 1, RoomID: "room-a", RoomName: "Kitchen", Style: "Contemporary", Palette: "Warm neutrals", Model: "test", CreatedAt: time.Now().UTC()}
+	if err := repository.SaveBatch(context.Background(), []roomdesign.Concept{concept}, [][]byte{[]byte("image bytes")}); err != nil {
+		t.Fatal(err)
+	}
+	service := roomdesign.NewService(projects, analysis.NewService(analysis.DemoAnalyzer{}), repository, nil, 0)
+	mux := http.NewServeMux()
+	registerRoomDesignHandlers(mux, projects, service)
+	call := func(ownerID, method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request = request.WithContext(auth.WithUser(request.Context(), auth.User{ID: ownerID}))
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	listPath := "/api/projects/" + owned.ID + "/rooms/room-a/designs?revision=1"
+	if response := call("user-b", http.MethodGet, listPath, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign room concepts status = %d", response.Code)
+	}
+	if response := call("user-b", http.MethodGet, "/api/room-designs/concept-a/image", ""); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign room image status = %d", response.Code)
+	}
+	if response := call("user-a", http.MethodGet, "/api/room-designs/concept-a/image", ""); response.Code != http.StatusOK || response.Body.String() != "image bytes" {
+		t.Fatalf("owner image response = %d %q", response.Code, response.Body.String())
+	}
+	if response := call("user-a", http.MethodPost, "/api/projects/"+owned.ID+"/rooms/room-a/designs", `{"roomId":"room-a","confirmationRevision":1,"style":"Contemporary","palette":"Warm neutrals","length":999}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("client-supplied room dimensions accepted: %d", response.Code)
+	}
+}
+
+func TestPlasterMaterialsRequireExplicitOptIn(t *testing.T) {
+	projects := project.NewService()
+	created, err := projects.CreateProject(project.Details{Name: "Proposal gate fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysisService := analysis.NewService(analysis.DemoAnalyzer{})
+	service := materials.NewService(estimate.NewService(analysisService), analysisService, projects, materials.NewMemoryRepository())
+	mux := http.NewServeMux()
+	registerMaterialHandlers(mux, projects, service)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return response
+	}
+	if response := call(http.MethodGet, "/api/material-capabilities", ""); response.Code != 200 || !strings.Contains(response.Body.String(), `"plasterMaterials":false`) {
+		t.Fatalf("proposal default: %d %s", response.Code, response.Body.String())
+	}
+	request := `{"estimateId":"unverified","allocations":[{"roomId":"room","trade":"plaster","recipe":{}}]}`
+	if response := call(http.MethodPost, "/api/projects/"+created.ID+"/material-budgets", request); response.Code != 409 || !strings.Contains(response.Body.String(), "PlasterMaterialsDisabled") {
+		t.Fatalf("unratified trade was accepted: %d %s", response.Code, response.Body.String())
+	}
+	service.EnablePlasterMaterials(true)
+	if response := call(http.MethodGet, "/api/material-capabilities", ""); response.Code != 200 || !strings.Contains(response.Body.String(), `"plasterMaterials":true`) {
+		t.Fatalf("proposal opt in not advertised: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func (handlerPageProcessor) Metadata(context.Context, []byte, string) (analysis.PageMetadata, error) {
+	return analysis.PageMetadata{PageCount: 2, ContentType: "application/pdf"}, nil
+}
+
+func (handlerPageProcessor) Prepare(_ context.Context, _ []byte, _ string, page int, mode string) (analysis.PreparedPage, error) {
+	content := []byte("canonical-page")
+	digest := sha256.Sum256(content)
+	return analysis.PreparedPage{Content: content, Source: analysis.Source{PageNumber: page, SelectionMode: mode, ImageDigest: hex.EncodeToString(digest[:]), PixelWidth: 20, PixelHeight: 10}}, nil
+}
+
+func TestManagedAnalysisHandlers(t *testing.T) {
+	store := project.NewService()
+	created, _ := store.CreateProject(project.Details{Name: "Sample"})
+	floorPlan, err := store.SaveFloorPlan(created.ID, "drawing.pdf", "application/pdf", []byte("%PDF-1.4\nfixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := analysis.NewServiceWithEngines(analysis.DemoAnalyzer{}, map[string]analysis.Analyzer{"demo": analysis.DemoAnalyzer{}, "gemini": analysis.DemoAnalyzer{}}, nil)
+	if err := service.EnableRuntime(analysis.RuntimeConfig{Jobs: analysis.NewMemoryJobStore(), Preparer: handlerPageProcessor{}, DefaultEngine: "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Close)
+	mux := http.NewServeMux()
+	registerAnalysisHandlers(mux, store, service)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return response
+	}
+	path := "/api/floor-plans/" + floorPlan.ID
+	if response := call(http.MethodGet, path+"/pages", ""); response.Code != 200 || !strings.Contains(response.Body.String(), `"pageCount":2`) {
+		t.Fatalf("metadata: %d %s", response.Code, response.Body.String())
+	}
+	for _, body := range []string{`{"pageNumber":0}`, `{"pageNumber":3}`, `{"pageNumber":1.5}`, `{} {}`, `{"unknown":true}`} {
+		if response := call(http.MethodPost, path+"/analysis", body); response.Code != 400 {
+			t.Fatalf("accepted invalid input %s: %d", body, response.Code)
+		}
+	}
+	if response := call(http.MethodPost, path+"/analysis", `{"engine":"gemini"}`); response.Code != 503 || !strings.Contains(response.Body.String(), "ProviderQuotaNotConfigured") {
+		t.Fatalf("missing quota: %d %s", response.Code, response.Body.String())
+	}
+	response := call(http.MethodPost, path+"/analysis", `{"engine":"demo","pageNumber":2}`)
+	if response.Code != 202 {
+		t.Fatalf("start: %d %s", response.Code, response.Body.String())
+	}
+	var started analysis.Candidate
+	if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	var candidate analysis.Candidate
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		response = call(http.MethodGet, "/api/analyses/"+started.ID, "")
+		if response.Code != 200 {
+			t.Fatalf("poll: %d %s", response.Code, response.Body.String())
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &candidate); err != nil {
+			t.Fatal(err)
+		}
+		if candidate.State != analysis.StateAnalyzing {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("analysis did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if candidate.State != analysis.StateReady || candidate.Source == nil || candidate.Source.PageNumber != 2 {
+		t.Fatalf("wrong selected page: %+v", candidate)
+	}
+	image := call(http.MethodGet, "/api/analyses/"+started.ID+"/source-image", "")
+	if image.Code != 200 || image.Body.String() != "canonical-page" || image.Header().Get("Content-Type") != "image/png" || image.Header().Get("ETag") == "" {
+		t.Fatalf("source image: %d %s", image.Code, image.Body.String())
+	}
+	conditional := httptest.NewRequest(http.MethodGet, "/api/analyses/"+started.ID+"/source-image", nil)
+	conditional.Header.Set("If-None-Match", image.Header().Get("ETag"))
+	cached := httptest.NewRecorder()
+	mux.ServeHTTP(cached, conditional)
+	if cached.Code != 304 || cached.Body.Len() != 0 {
+		t.Fatal("source cache conditional failed")
+	}
+	if got := call(http.MethodGet, "/api/analyses/missing", "").Code; got != 404 {
+		t.Fatalf("missing status: %d", got)
+	}
+	if got := call(http.MethodPost, path+"/analysis", strings.Repeat(" ", 65537)+`{}`).Code; got != 413 {
+		t.Fatalf("oversized body: %d", got)
+	}
+}
+
+func TestProviderLimitsFromEnvironment(t *testing.T) {
+	t.Setenv("GEMINI_DAILY_CALL_LIMIT", "10")
+	t.Setenv("OLLAMA_DAILY_CALL_LIMIT", "0")
+	t.Setenv("NVIDIA_DAILY_CALL_LIMIT", "5")
+	limits, err := providerLimitsFromEnvironment()
+	if err != nil || limits["gemini"] != 10 || limits["ollama"] != 0 || limits["nvidia"] != 5 {
+		t.Fatalf("limits: %v %v", limits, err)
+	}
+	t.Setenv("GEMINI_DAILY_CALL_LIMIT", "invalid")
+	if _, err := providerLimitsFromEnvironment(); err == nil {
+		t.Fatal("invalid provider quota accepted")
+	}
+}
+
+type quotaRejectedStore struct{ *analysis.MemoryJobStore }
+
+func (quotaRejectedStore) ReserveCall(context.Context, string, analysis.JobControl, string, string, string, int) error {
+	reset := time.Now().UTC().Add(time.Hour)
+	return &analysis.RuntimeError{Status: 429, Failure: analysis.AnalysisError{ErrorCode: "ProviderQuotaExceeded", Message: "Daily limit reached", Retryable: true, RetryAt: &reset}}
+}
+
+type handlerCountingAnalyzer struct{ calls *atomic.Int32 }
+
+func (analyzer handlerCountingAnalyzer) Analyze(ctx context.Context, content []byte, fileName string) (analysis.Candidate, error) {
+	analyzer.calls.Add(1)
+	return (analysis.DemoAnalyzer{}).Analyze(ctx, content, fileName)
+}
+
+func TestAcceptedQuotaFailureIsPolledWithoutProviderCall(t *testing.T) {
+	store := project.NewService()
+	created, _ := store.CreateProject(project.Details{Name: "Sample quota"})
+	floorPlan, err := store.SaveFloorPlan(created.ID, "drawing.pdf", "application/pdf", []byte("%PDF-1.4\nfixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	analyzer := handlerCountingAnalyzer{calls: &calls}
+	service := analysis.NewServiceWithEngines(analyzer, map[string]analysis.Analyzer{"gemini": analyzer}, nil)
+	if err := service.EnableRuntime(analysis.RuntimeConfig{Jobs: quotaRejectedStore{analysis.NewMemoryJobStore()}, Preparer: handlerPageProcessor{}, DefaultEngine: "gemini", QuotaScope: "test", DailyLimits: map[string]int{"gemini": 1}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Close)
+	mux := http.NewServeMux()
+	registerAnalysisHandlers(mux, store, service)
+	accepted := httptest.NewRecorder()
+	mux.ServeHTTP(accepted, httptest.NewRequest(http.MethodPost, "/api/floor-plans/"+floorPlan.ID+"/analysis", strings.NewReader(`{"engine":"gemini","pageNumber":2}`)))
+	if accepted.Code != 202 {
+		t.Fatalf("not accepted: %d %s", accepted.Code, accepted.Body.String())
+	}
+	var started analysis.Candidate
+	if err := json.Unmarshal(accepted.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/analyses/"+started.ID, nil))
+		if response.Code != 200 {
+			t.Fatalf("stored failure changed polling HTTP status: %d", response.Code)
+		}
+		var candidate analysis.Candidate
+		if err := json.Unmarshal(response.Body.Bytes(), &candidate); err != nil {
+			t.Fatal(err)
+		}
+		if candidate.State == analysis.StateFailed {
+			if candidate.Error == nil || candidate.Error.ErrorCode != "ProviderQuotaExceeded" || candidate.Error.RetryAt == nil || candidate.ErrorMessage == "" {
+				t.Fatalf("failure metadata missing: %+v", candidate)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("quota rejection was not persisted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if calls.Load() != 0 || accepted.Code != 202 {
+		t.Fatal("quota rejection invoked provider or rewrote acceptance")
+	}
+}
+
+func TestConfirmationReadHandlers(t *testing.T) {
+	store := project.NewService()
+	created, err := store.CreateProject(project.Details{Name: "Confirmation route fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	floorPlan, err := store.SaveFloorPlan(created.ID, "plan.png", "image/png", []byte("\x89PNG\r\n\x1a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := analysis.NewService(analysis.DemoAnalyzer{})
+	mux := http.NewServeMux()
+	registerAnalysisHandlers(mux, store, service)
+	registerConfirmationHandlers(mux, store, service)
+	started, err := service.Start(floorPlan.ID, []byte("drawing"), "plan.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignRead := httptest.NewRequest(http.MethodGet, "/api/analyses/"+started.ID, nil)
+	foreignRead = foreignRead.WithContext(auth.WithUser(foreignRead.Context(), auth.User{ID: "other-user"}))
+	foreignResponse := httptest.NewRecorder()
+	mux.ServeHTTP(foreignResponse, foreignRead)
+	if foreignResponse.Code != http.StatusNotFound {
+		t.Fatalf("foreign analysis read status = %d", foreignResponse.Code)
+	}
+	foreignPage := httptest.NewRequest(http.MethodGet, "/api/floor-plans/"+floorPlan.ID+"/pages", nil)
+	foreignPage = foreignPage.WithContext(auth.WithUser(foreignPage.Context(), auth.User{ID: "other-user"}))
+	foreignPageResponse := httptest.NewRecorder()
+	mux.ServeHTTP(foreignPageResponse, foreignPage)
+	if foreignPageResponse.Code != http.StatusNotFound {
+		t.Fatalf("foreign floor-plan metadata status = %d", foreignPageResponse.Code)
 	}
 	read := func(path string) *httptest.ResponseRecorder {
 		writer := httptest.NewRecorder()
@@ -44,9 +406,25 @@ func TestConfirmationReadHandlers(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	candidate.Rooms[0].Confidence = 1
-	candidate.Rooms[0].Uncertainty = ""
-	if _, err := service.Confirm(started.ID, candidate); err != nil {
+	candidate.Rooms[0].Uncertainty = "client override"
+	candidate.Rooms[0].Length.Value++
+	candidate.Corrections = []analysis.Correction{{EntityID: "forged", Field: "length", Origin: "user"}}
+	candidate.ReviewIssues = []analysis.ReviewIssue{{EntityID: "forged", Code: "Forged"}}
+	body, err := json.Marshal(candidate)
+	if err != nil {
 		t.Fatal(err)
+	}
+	confirmation := httptest.NewRecorder()
+	mux.ServeHTTP(confirmation, httptest.NewRequest(http.MethodPut, path, strings.NewReader(string(body))))
+	if confirmation.Code != http.StatusOK {
+		t.Fatalf("confirm status=%d body=%s", confirmation.Code, confirmation.Body.String())
+	}
+	var submitted analysis.Candidate
+	if err := json.Unmarshal(confirmation.Body.Bytes(), &submitted); err != nil {
+		t.Fatal(err)
+	}
+	if len(submitted.Corrections) != 1 || submitted.Corrections[0].EntityID != submitted.Rooms[0].ID || submitted.Corrections[0].Field != "length" || submitted.Rooms[0].Uncertainty == "client override" || len(submitted.ReviewIssues) != 0 {
+		t.Fatalf("confirmation route trusted client audit metadata: %+v", submitted)
 	}
 	for _, endpoint := range []string{path, path + "/1"} {
 		response := read(endpoint)
@@ -71,8 +449,8 @@ func TestConfirmationReadHandlers(t *testing.T) {
 	if err := json.Unmarshal(read("/api/analyses/"+started.ID+"/confirmations").Body.Bytes(), &history); err != nil || len(history) != 1 || history[0].ConfirmedAt.IsZero() {
 		t.Fatalf("history = %+v, %v", history, err)
 	}
-	if body := read("/api/analyses/other/confirmations").Body.String(); strings.TrimSpace(body) != "[]" {
-		t.Fatalf("empty history body = %q", body)
+	if response := read("/api/analyses/other/confirmations"); response.Code != http.StatusNotFound {
+		t.Fatalf("foreign analysis history status = %d", response.Code)
 	}
 }
 

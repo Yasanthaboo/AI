@@ -1,6 +1,12 @@
 # Implementation Plan: Plan-Matched Single-Floor 3D Model
 
-**Status:** Constitution 1.2.0 approves reviewed layout. Manual rectangle tracing, independent confirmed layout persistence, and positioned wall extrusion are implemented. AI-proposed traces, opening anchors, and irregular polygons remain planned.
+**Status:** Historical design, superseded by constitutions 1.3.0 and 1.4.0. The sections below describe the earlier separate-layout-confirmation proposal, not the current implementation. Manual tracing, independent layout confirmation, verified wall anchors, and irregular polygons must not be treated as delivered or required by the current POC.
+
+## Current Baseline and Successor
+
+The current contract contains optional normalized rectangular room bounds. Confirmed dimensions drive an AI-estimated single-floor model; rooms without bounds may be arranged approximately, and openings use indicative placement. Spec 004 supplies the workspace/model tools and stored drawing retrieval. Numeric confirmation remains the sole source of QS inputs. The historical flow below is retained for context only.
+
+Spec 005 (`../005-next-demo-recognition-and-material-prices/spec.md`) proposes evidence-backed window/stair/balcony review and model annotations without reviving separate verified-layout confirmation. It also proposes a separate finish-material/local-price pilot; it is not implemented.
 
 ## Current Gap
 

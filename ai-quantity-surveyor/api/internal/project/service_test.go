@@ -1,6 +1,12 @@
 package project
 
-import "testing"
+import (
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestSaveFloorPlanValidatesTypeSizeAndOneDrawingRule(t *testing.T) {
 	service := NewService()
@@ -58,5 +64,96 @@ func TestListArchiveAndDuplicate(t *testing.T) {
 	}
 	if _, err := Duplicate(service, "missing"); err == nil {
 		t.Fatal("expected missing project error")
+	}
+}
+
+func TestProjectOwnershipAndOwnerlessMigration(t *testing.T) {
+	service := NewService()
+	first, err := service.CreateProjectForOwner(Details{Name: "Private project"}, "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := service.GetProjectForOwner(first.ID, "user-b"); found {
+		t.Fatal("foreign owner read project")
+	}
+	if projects := service.ListProjectsForOwner("user-b"); len(projects) != 0 {
+		t.Fatalf("foreign owner listed projects: %+v", projects)
+	}
+	if _, err := service.SetArchivedForOwner(first.ID, "user-b", true); err == nil {
+		t.Fatal("foreign owner archived project")
+	}
+	if _, err := DuplicateForOwner(service, first.ID, "user-b"); err == nil {
+		t.Fatal("foreign owner duplicated project")
+	}
+
+	legacy, err := service.CreateProject(Details{Name: "Legacy project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.mu.Lock()
+	legacy.OwnerID = ""
+	service.projects[legacy.ID] = legacy
+	service.mu.Unlock()
+	storePath := filepath.Join(t.TempDir(), "projects.json")
+	service.persistencePath = storePath
+	if err := service.AssignOwnerlessProjects("admin-user"); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewPersistentService(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := reopened.GetProjectForOwner(legacy.ID, "admin-user"); !found {
+		t.Fatal("adopted owner was not persisted")
+	}
+	if _, found := reopened.GetProjectForOwner(first.ID, "admin-user"); found {
+		t.Fatal("migration reassigned an already-owned project")
+	}
+}
+
+func TestPostgresOwnerMigrationAndIsolation(t *testing.T) {
+	connection := os.Getenv("SURVEYOR_JOB_TEST_DATABASE_URL")
+	if connection == "" {
+		t.Skip("disposable project-owner test database not configured")
+	}
+	parsed, err := url.Parse(connection)
+	if err != nil || !strings.HasPrefix(strings.TrimPrefix(parsed.Path, "/"), "surveyor_job_test") {
+		t.Fatal("project-owner migration requires a disposable surveyor_job_test database")
+	}
+	store, err := NewPostgresService(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	legacy, err := store.CreateProject(Details{Name: "Owner migration fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AssignOwnerlessProjects("admin-user"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := store.GetProjectForOwner(legacy.ID, "admin-user"); !found {
+		t.Fatal("legacy project was not assigned to initial admin")
+	}
+
+	owned, err := store.CreateProjectForOwner(Details{Name: "Owner A fixture"}, "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := store.GetProjectForOwner(owned.ID, "user-b"); found {
+		t.Fatal("PostgreSQL returned project to foreign owner")
+	}
+	foundOwned := false
+	for _, item := range store.ListProjectsForOwner("user-a") {
+		if item.ID == owned.ID {
+			foundOwned = true
+		}
+	}
+	if !foundOwned {
+		t.Fatal("PostgreSQL owner-filtered list omitted project")
+	}
+	if _, err := store.SetArchivedForOwner(owned.ID, "user-b", true); err == nil {
+		t.Fatal("PostgreSQL allowed a foreign owner to archive project")
 	}
 }

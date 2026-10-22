@@ -36,20 +36,24 @@ func (request Request) rates() domain.Rates {
 }
 
 type Version struct {
-	ID                    string                       `json:"id"`
-	ProjectID             string                       `json:"projectId"`
-	Version               int                          `json:"version"`
-	SourceAnalysisID      string                       `json:"sourceAnalysisId"`
-	TargetCurrency        string                       `json:"targetCurrency"`
-	ExchangeRate          float64                      `json:"exchangeRate"`
-	ExchangeRateFetchedAt string                       `json:"exchangeRateFetchedAt"`
-	Rates                 *domain.Rates                `json:"rates,omitempty"`
-	Finishes              map[string]domain.RoomFinish `json:"finishes,omitempty"`
-	Result                domain.CalculationResult     `json:"result"`
-	ConvertedPlasterCost  float64                      `json:"convertedPlasterCost"`
-	ConvertedPaintCost    float64                      `json:"convertedPaintCost"`
-	ConvertedGrandTotal   float64                      `json:"convertedGrandTotal"`
-	CalculatedAt          time.Time                    `json:"calculatedAt"`
+	ID                         string                       `json:"id"`
+	ProjectID                  string                       `json:"projectId"`
+	Version                    int                          `json:"version"`
+	SourceAnalysisID           string                       `json:"sourceAnalysisId"`
+	SourceConfirmationRevision int                          `json:"sourceConfirmationRevision,omitempty"`
+	SourceFloorPlanID          string                       `json:"sourceFloorPlanId,omitempty"`
+	SourcePageNumber           int                          `json:"sourcePageNumber,omitempty"`
+	SourceImageDigest          string                       `json:"sourceImageDigest,omitempty"`
+	TargetCurrency             string                       `json:"targetCurrency"`
+	ExchangeRate               float64                      `json:"exchangeRate"`
+	ExchangeRateFetchedAt      string                       `json:"exchangeRateFetchedAt"`
+	Rates                      *domain.Rates                `json:"rates,omitempty"`
+	Finishes                   map[string]domain.RoomFinish `json:"finishes,omitempty"`
+	Result                     domain.CalculationResult     `json:"result"`
+	ConvertedPlasterCost       float64                      `json:"convertedPlasterCost"`
+	ConvertedPaintCost         float64                      `json:"convertedPaintCost"`
+	ConvertedGrandTotal        float64                      `json:"convertedGrandTotal"`
+	CalculatedAt               time.Time                    `json:"calculatedAt"`
 }
 
 type Service struct {
@@ -79,7 +83,11 @@ func (service *Service) Create(projectID string, request Request) (Version, erro
 	if request.TargetCurrency == "" {
 		return Version{}, errors.New("target currency is required")
 	}
-	confirmed, ok := service.analysis.Confirmed(request.AnalysisID)
+	snapshot, hasSnapshot := service.analysis.LatestConfirmation(request.AnalysisID)
+	confirmed, ok := snapshot.Candidate, hasSnapshot
+	if !hasSnapshot {
+		confirmed, ok = service.analysis.Confirmed(request.AnalysisID)
+	}
 	if !ok {
 		return Version{}, errors.New("confirmed floor-plan data is required")
 	}
@@ -113,6 +121,14 @@ func (service *Service) Create(projectID string, request Request) (Version, erro
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	version := Version{ID: fmt.Sprintf("estimate-%d", time.Now().UnixNano()), ProjectID: projectID, Version: len(service.versions[projectID]) + 1, SourceAnalysisID: request.AnalysisID, TargetCurrency: request.TargetCurrency, ExchangeRate: request.ExchangeRate, ExchangeRateFetchedAt: request.ExchangeRateFetchedAt, Rates: &rates, Finishes: finishes, Result: result, ConvertedPlasterCost: plaster, ConvertedPaintCost: paint, ConvertedGrandTotal: grand, CalculatedAt: time.Now().UTC()}
+	version.SourceFloorPlanID = confirmed.FloorPlanID
+	if hasSnapshot {
+		version.SourceConfirmationRevision = snapshot.Revision
+	}
+	if confirmed.Source != nil {
+		version.SourcePageNumber = confirmed.Source.PageNumber
+		version.SourceImageDigest = confirmed.Source.ImageDigest
+	}
 	service.versions[projectID] = append(service.versions[projectID], version)
 	if service.repository != nil {
 		if err := service.repository.Save(version); err != nil {
@@ -131,7 +147,8 @@ func (service *Service) Get(projectID, id string) (Version, bool) {
 		}
 	}
 	if service.repository != nil {
-		return service.repository.Get(id)
+		version, ok := service.repository.Get(id)
+		return version, ok && version.ProjectID == projectID
 	}
 	return Version{}, false
 }

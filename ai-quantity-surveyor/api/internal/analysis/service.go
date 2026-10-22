@@ -21,6 +21,7 @@ type Service struct {
 	confirmed  map[string]Candidate
 	snapshots  map[string][]Confirmation
 	repository Repository
+	runtime    *analysisRuntime
 }
 
 type Confirmation struct {
@@ -66,6 +67,9 @@ func (service *Service) StartWithEngine(engine, floorPlanID string, content []by
 }
 
 func (service *Service) start(engine string, analyzer Analyzer, floorPlanID string, content []byte, fileName string) (Candidate, error) {
+	if service.runtime != nil {
+		return service.startManaged(context.Background(), engine, analyzer, floorPlanID, content, fileName, nil)
+	}
 	if floorPlanID == "" || len(content) == 0 {
 		return Candidate{}, fmt.Errorf("floor plan content is required")
 	}
@@ -85,13 +89,21 @@ func (service *Service) start(engine string, analyzer Analyzer, floorPlanID stri
 }
 
 func (service *Service) Get(id string) (Candidate, bool) {
+	if service.runtime != nil {
+		candidate, ok, err := service.Read(context.Background(), id)
+		return candidate, ok && err == nil
+	}
 	service.mu.RLock()
 	candidate, ok := service.results[id]
 	service.mu.RUnlock()
 	if !ok && service.repository != nil {
-		return service.repository.Get(id)
+		candidate, ok = service.repository.Get(id)
 	}
-	return candidate, ok
+	if !ok {
+		return Candidate{}, false
+	}
+	cloned, err := copyCandidate(candidate)
+	return cloned, err == nil
 }
 
 func (service *Service) Confirm(id string, candidate Candidate) (Candidate, error) {
@@ -101,6 +113,13 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	original, ok := service.results[id]
+	if service.runtime != nil {
+		var err error
+		original, ok, err = service.runtime.jobs.ReadJob(context.Background(), id)
+		if err != nil {
+			return Candidate{}, runtimeFailure(503, "StatusStoreUnavailable", "Analysis status unavailable; retry later.", true)
+		}
+	}
 	if !ok && service.repository != nil {
 		original, ok = service.repository.Get(id)
 	}
@@ -110,13 +129,26 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 	if original.State != StateReady {
 		return Candidate{}, fmt.Errorf("analysis %q is not ready for confirmation", id)
 	}
+	if candidate.Source != nil && (original.Source == nil || *candidate.Source != *original.Source) {
+		return Candidate{}, fmt.Errorf("analysis %q source identity cannot be changed", id)
+	}
 	candidate.ID = original.ID
 	candidate.FloorPlanID = original.FloorPlanID
 	candidate.DrawingAspect = original.DrawingAspect
 	candidate.Engine, candidate.Model = original.Engine, original.Model
 	candidate.StartedAt, candidate.CompletedAt = original.StartedAt, original.CompletedAt
+	candidate.Source = nil
+	if original.Source != nil {
+		source := *original.Source
+		candidate.Source = &source
+	}
+	candidate.Corrections = nil
+	candidate.Error = nil
 	sanitizeBounds(&candidate)
 	sanitizeAssumptions(&candidate)
+	if err := confirmationAudit(original, &candidate); err != nil {
+		return Candidate{}, err
+	}
 	revision := len(service.snapshots[id]) + 1
 	if repository, ok := service.repository.(ConfirmationRepository); ok {
 		if latest, exists := repository.LatestConfirmation(id); exists && latest.Revision >= revision {
@@ -143,7 +175,7 @@ func (service *Service) Confirm(id string, candidate Candidate) (Candidate, erro
 			}
 		}
 	}
-	return candidate, nil
+	return copyCandidate(stored)
 }
 
 type ConfirmationRepository interface {
@@ -272,6 +304,8 @@ func (service *Service) run(analyzer Analyzer, started Candidate, content []byte
 	} else {
 		candidate.ID = id
 		candidate.FloorPlanID = floorPlanID
+		candidate.Source = started.Source
+		candidate.Corrections = nil
 		if candidate.DrawingAspect == 0 {
 			candidate.DrawingAspect = drawingAspect(content)
 		}

@@ -40,6 +40,22 @@ func TestCreateRequiresConfirmationAndPreservesVersions(t *testing.T) {
 	if first.Rates == nil || first.Rates.PlasterUSDPerSquareMeter != 10 || second.Rates.PlasterUSDPerSquareMeter != 12 {
 		t.Fatalf("rates were not stored on versions: %+v %+v", first.Rates, second.Rates)
 	}
+	if first.SourceConfirmationRevision != 1 || first.SourceFloorPlanID != "fp-1" {
+		t.Fatalf("exact confirmation provenance missing: %+v", first)
+	}
+	reviewed, _ := analysisService.Get(started.ID)
+	reviewed.Rooms[0].Length.Value = 6
+	if _, err := analysisService.Confirm(started.ID, reviewed); err != nil {
+		t.Fatal(err)
+	}
+	revised, err := service.Create("project-1", Request{AnalysisID: started.ID, PlasterUSDPerSquareMeter: 10, PaintUSDPerSquareMeter: 5, TargetCurrency: "USD", ExchangeRate: 1})
+	if err != nil || revised.SourceConfirmationRevision != 2 {
+		t.Fatalf("new estimate has wrong source revision: %+v %v", revised, err)
+	}
+	preserved, _ := service.Get("project-1", first.ID)
+	if preserved.SourceConfirmationRevision != 1 || preserved.Result.Rooms[0].FloorArea != first.Result.Rooms[0].FloorArea {
+		t.Fatal("new confirmation changed an older estimate")
+	}
 
 	finished, err := service.Create("project-1", Request{AnalysisID: started.ID, PlasterUSDPerSquareMeter: 10, PaintUSDPerSquareMeter: 5, FlooringUSDPerSquareMeter: 20, WastePercent: 5, TargetCurrency: "USD", ExchangeRate: 1,
 		Finishes: map[string]domain.RoomFinish{"room-3": {ExcludeFlooring: true, TilePercent: 50}, "room-2": {}}})

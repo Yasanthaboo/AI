@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS floor_plans (
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS client TEXT NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
-ALTER TABLE projects ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;`)
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id TEXT;`)
 	if err != nil {
 		return fmt.Errorf("ensure project schema: %w", err)
 	}
@@ -54,24 +56,37 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT 
 }
 
 func (service *PostgresService) CreateProject(details Details) (Project, error) {
+	return service.CreateProjectForOwner(details, "local")
+}
+
+func (service *PostgresService) CreateProjectForOwner(details Details, ownerID string) (Project, error) {
+	if strings.TrimSpace(ownerID) == "" {
+		return Project{}, errors.New("project owner is required")
+	}
 	project, err := details.project()
 	if err != nil {
 		return Project{}, err
 	}
-	_, err = service.db.Exec(`INSERT INTO projects (id, name, client, location, description, created_at, status) VALUES ($1, $2, $3, $4, $5, $6, $7)`, project.ID, project.Name, project.Client, project.Location, project.Description, project.CreatedAt, project.Status)
+	project.OwnerID = ownerID
+	_, err = service.db.Exec(`INSERT INTO projects (id, owner_id, name, client, location, description, created_at, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, project.ID, project.OwnerID, project.Name, project.Client, project.Location, project.Description, project.CreatedAt, project.Status)
 	return project, err
 }
 
-const projectColumns = `id, name, client, location, description, created_at, status, archived`
+const projectColumns = `id, owner_id, name, client, location, description, created_at, status, archived`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var project Project
-	err := row.Scan(&project.ID, &project.Name, &project.Client, &project.Location, &project.Description, &project.CreatedAt, &project.Status, &project.Archived)
+	err := row.Scan(&project.ID, &project.OwnerID, &project.Name, &project.Client, &project.Location, &project.Description, &project.CreatedAt, &project.Status, &project.Archived)
 	return project, err
 }
 
 func (service *PostgresService) GetProject(id string) (Project, bool) {
 	project, err := scanProject(service.db.QueryRow(`SELECT `+projectColumns+` FROM projects WHERE id = $1`, id))
+	return project, err == nil
+}
+
+func (service *PostgresService) GetProjectForOwner(id, ownerID string) (Project, bool) {
+	project, err := scanProject(service.db.QueryRow(`SELECT `+projectColumns+` FROM projects WHERE id = $1 AND owner_id = $2`, id, ownerID))
 	return project, err == nil
 }
 
@@ -90,16 +105,57 @@ func (service *PostgresService) ListProjects() []Project {
 	return projects
 }
 
+func (service *PostgresService) ListProjectsForOwner(ownerID string) []Project {
+	rows, err := service.db.Query(`SELECT `+projectColumns+` FROM projects WHERE owner_id = $1 ORDER BY created_at DESC`, ownerID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var projects []Project
+	for rows.Next() {
+		if project, err := scanProject(rows); err == nil {
+			projects = append(projects, project)
+		}
+	}
+	return projects
+}
+
 func (service *PostgresService) SetArchived(id string, archived bool) (Project, error) {
-	result, err := service.db.Exec(`UPDATE projects SET archived = $2 WHERE id = $1`, id, archived)
+	project, found := service.GetProject(id)
+	if !found {
+		return Project{}, fmt.Errorf("project %q not found", id)
+	}
+	return service.SetArchivedForOwner(id, project.OwnerID, archived)
+}
+
+func (service *PostgresService) SetArchivedForOwner(id, ownerID string, archived bool) (Project, error) {
+	result, err := service.db.Exec(`UPDATE projects SET archived = $3 WHERE id = $1 AND owner_id = $2`, id, ownerID, archived)
 	if err != nil {
 		return Project{}, err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return Project{}, fmt.Errorf("project %q not found", id)
 	}
-	project, _ := service.GetProject(id)
+	project, _ := service.GetProjectForOwner(id, ownerID)
 	return project, nil
+}
+
+func (service *PostgresService) AssignOwnerlessProjects(ownerID string) error {
+	if strings.TrimSpace(ownerID) == "" {
+		return errors.New("migration owner is required")
+	}
+	tx, err := service.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE projects SET owner_id = $1 WHERE owner_id IS NULL OR ($1 <> 'local' AND owner_id = 'local')`, ownerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE projects ALTER COLUMN owner_id SET NOT NULL`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (service *PostgresService) FloorPlanForProject(projectID string) (FloorPlan, bool) {

@@ -35,3 +35,17 @@ export async function loadDrawing(analysisId: string): Promise<File | null> {
     database.close();
   }
 }
+
+export async function clearDrawings(): Promise<void> {
+  const database = await openDrawings();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("drawings", "readwrite");
+      transaction.objectStore("drawings").clear();
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } finally {
+    database.close();
+  }
+}

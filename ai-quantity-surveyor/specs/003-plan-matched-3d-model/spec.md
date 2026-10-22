@@ -2,6 +2,8 @@
 
 **Status:** Superseded for the proof of concept by constitution 1.3.0: the AI extracts room boundaries and the model is shown automatically after dimension confirmation as an AI-estimated layout. Manual tracing and separate layout confirmation were removed.
 
+**Reading guide:** The requirements and acceptance criteria below are historical, not the active POC contract. Constitution 1.4.0 and spec 004 define the current AI-estimated model, approximate room fallback, and indicative openings. Spec 005 proposes the next recognition/review increment; it does not claim verified layout or restore the old manual-tracing workflow.
+
 ## Goal
 
 After a quantity surveyor confirms dimensions and the layout traced from the uploaded drawing, show a single-floor 3D model whose room positions, wall connections, and verified openings match that drawing. Do not present dimensions alone as enough information to reconstruct a floor plan.
@@ -45,4 +47,4 @@ After a quantity surveyor confirms dimensions and the layout traced from the upl
 
 ## Scope Gate
 
-Constitution 1.2.0 permits separately reviewed single-floor spatial geometry while preserving the no-fabrication rule and independent deterministic QS calculations. The current implementation requires manual rectangular room tracing on an image or PDF page one. Opening anchors, nonrectangular room geometry, and AI-proposed traces are not implemented; do not claim those acceptance criteria until they are delivered. Multi-floor modeling and construction-ready BIM/CAD remain excluded.
+Historical gate: constitution 1.2.0 permitted separately reviewed single-floor geometry. This design was superseded; the current implementation uses AI-estimated room bounds and indicative openings under constitution 1.4.0. Do not claim the historical verified-layout acceptance criteria as delivered. Multi-floor modeling and construction-ready BIM/CAD remain excluded.

@@ -39,7 +39,7 @@ export default function AnalysisDetails({ candidate, engines, floorPlanId, onRer
     setBusy(true);
     setError("");
     try {
-      const finished = await runAnalysis(floorPlanId, engine, () => cancelled.current);
+      const finished = await runAnalysis(floorPlanId, engine, () => cancelled.current, candidate.source?.pageNumber);
       if (finished) onRerun(finished.id, finished.candidate);
     } catch (failure) {
       if (!cancelled.current) setError(failure instanceof Error ? failure.message : "The analysis failed.");

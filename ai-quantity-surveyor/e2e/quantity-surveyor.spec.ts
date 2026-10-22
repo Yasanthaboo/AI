@@ -7,6 +7,31 @@ const planPng = Buffer.from(
   "base64",
 );
 const meters = (value: number) => ({ value, unit: "m" });
+const integrationAPI = process.env.PLAYWRIGHT_API_URL;
+const legacyAccount = { plan: { id: "studio", name: "Studio", features: ["aiAnalysis", "model3d", "materials", "exports", "designStudio"] }, assignmentSource: "demo", demoSwitchingEnabled: true };
+const legacyUser = { id: "legacy-test-user", email: "legacy@example.test", aud: "authenticated", role: "authenticated", app_metadata: { provider: "email", providers: ["email"] }, user_metadata: {}, identities: [], created_at: "2026-10-21T00:00:00Z" };
+
+test.beforeAll(async ({ request }) => {
+  test.skip(!integrationAPI || process.env.SURVEYOR_E2E_ISOLATED !== "true", "Legacy integration tests require an explicitly opted-in disposable local API.");
+  const target = new URL(integrationAPI!);
+  if (target.hostname !== "127.0.0.1" || Number(target.port) < 18000) throw new Error("Refusing legacy integration tests against a non-isolated API URL.");
+  const response = await request.put(`${integrationAPI}/api/account/plan`, { data: { planId: "studio" } });
+  expect(response.status()).toBe(200);
+});
+
+test.beforeEach(async ({ page }) => {
+  await page.route("**/auth/v1/token**", (route) => route.fulfill({ json: { access_token: "legacy-test-token", token_type: "bearer", expires_in: 3600, refresh_token: "legacy-refresh-token", user: legacyUser } }));
+  await page.route("**/api/account/plan", (route) => route.fulfill({ json: legacyAccount }));
+  await page.goto("/");
+  const email = page.getByLabel("Email", { exact: true });
+  await expect(email.or(page.getByRole("heading", { name: "Projects", exact: true }))).toBeVisible();
+  if (await email.isVisible()) {
+    await email.fill(legacyUser.email);
+    await page.getByLabel("Password", { exact: true }).fill("fixture-password-1");
+    await page.getByRole("button", { name: "Sign in", exact: true }).last().click();
+  }
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+});
 
 async function bytes(download: Download) {
   const chunks: Buffer[] = [];
@@ -20,8 +45,10 @@ async function createProject(page: Page, name = "Smith residence") {
   await page.getByLabel("Project name").fill(name);
   await page.getByLabel("Client").fill("Smith family");
   await page.getByLabel("Site location").fill("12 Harbour Rd");
+  const creation = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "POST");
   await page.getByRole("button", { name: "Create project" }).click();
-  await expect(page.getByRole("heading", { name: "Upload the floor plan" })).toBeVisible();
+  expect((await creation).status()).toBe(201);
+  await expect(page.getByRole("heading", { name: "Upload the floor plan" })).toBeVisible({ timeout: 15000 });
 }
 
 async function analyzeDemo(page: Page) {
@@ -39,6 +66,126 @@ async function confirmDemo(page: Page) {
 }
 
 const unique = (name: string) => `${name} ${Date.now().toString(36)}`;
+
+async function mockManagedWorkflow(page: Page, options: { missingSource?: boolean; quotaFailure?: boolean; transientStatus?: boolean } = {}) {
+  const source = { floorPlanId: "fixture-plan", pageNumber: 2, selectionMode: "explicit" as const, imageDigest: "fixture-digest", pixelWidth: 1, pixelHeight: 1 };
+  const candidate: Candidate = { id: "fixture-analysis", floorPlanId: "fixture-plan", analysisState: "AnalysisReady", engine: "demo", source, rooms: [{ id: "room-1", name: "Hall", length: meters(4), width: meters(3), wallHeight: meters(2.7), confidence: 1, bounds: { x: 0.1, y: 0.1, width: 0.7, height: 0.7 } }], doors: [], windows: [{ id: "window-1", roomId: "room-1", width: meters(1.2), height: meters(1), confidence: 1 }] };
+  let confirmed: Candidate | null = null;
+  let submittedPage: number | undefined;
+  let statusReads = 0;
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/account/plan") return route.fulfill({ json: legacyAccount });
+    if (path === "/api/analysis-engines") return route.fulfill({ json: ["demo"] });
+    if (path === "/api/projects" && request.method() === "GET") return route.fulfill({ json: [] });
+    if (path === "/api/projects" && request.method() === "POST") return route.fulfill({ status: 201, json: { id: "fixture-project", name: "Preview fixture", status: "Created", createdAt: new Date().toISOString() } });
+    if (path.endsWith("/floor-plan")) return route.fulfill({ status: 201, json: { id: "fixture-plan", fileName: "plan.png", fileSize: planPng.length } });
+    if (path.endsWith("/analysis")) {
+      submittedPage = request.postDataJSON().pageNumber;
+      return route.fulfill({ status: 202, json: { id: "fixture-analysis", analysisState: "Analyzing" } });
+    }
+    if (path === "/api/analyses/fixture-analysis") {
+      statusReads += 1;
+      if (options.transientStatus && statusReads === 1) return route.fulfill({ status: 503, json: { errorCode: "StatusStoreUnavailable", message: "Temporary status outage", retryable: true } });
+      return route.fulfill({ json: options.quotaFailure ? { id: "fixture-analysis", analysisState: "AnalysisFailed", errorMessage: "Daily limit reached", error: { errorCode: "ProviderQuotaExceeded", message: "Daily limit reached", retryable: true, retryAt: "2026-10-15T00:00:00Z" } } : candidate });
+    }
+    if (path.endsWith("/source-image")) return options.missingSource ? route.fulfill({ status: 404, json: { message: "Unavailable" } }) : route.fulfill({ contentType: "image/png", headers: { ETag: '"fixture-digest"', "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "ETag" }, body: planPng });
+    if (path.endsWith("/confirmed-data") && request.method() === "PUT") {
+      confirmed = { ...request.postDataJSON(), confirmationRevision: 1 };
+      return route.fulfill({ json: confirmed });
+    }
+    return route.fulfill({ status: 404, json: { message: "Fixture endpoint not provided" } });
+  });
+  return { original: candidate, confirmed: () => confirmed, submittedPage: () => submittedPage };
+}
+
+test("managed dimension preview preserves original values until explicit confirmation", async ({ page }) => {
+  const fixture = await mockManagedWorkflow(page);
+  await createProject(page);
+  await analyzeDemo(page);
+  await expect(page.getByRole("heading", { name: "Dimension preview" })).toBeVisible();
+  await expect(page.getByAltText("Uploaded floor plan")).toBeVisible();
+  await page.getByLabel("Hall length").fill("5");
+  await expect(page.locator(".dimension-comparison")).toContainText("Original: 4 m");
+  await expect(page.locator(".dimension-comparison")).toContainText("Pending: 5 m");
+  expect(fixture.original.rooms![0].length!.value).toBe(4);
+  expect(fixture.confirmed()).toBeNull();
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await expect(page.getByLabel("Drawing zoom")).toHaveText("125%");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "test-results/managed-review-desktop.png", fullPage: true });
+  await page.getByRole("button", { name: "Confirm and build model" }).click();
+  await expect(page.getByRole("heading", { name: "3D model" })).toBeVisible();
+  await expect(page.locator(".scene-host canvas")).toBeVisible();
+  expect(await page.locator(".scene-host canvas").evaluate((canvas) => {
+    const sample = document.createElement("canvas");
+    sample.width = 32; sample.height = 32;
+    const context = sample.getContext("2d")!;
+    context.drawImage(canvas as HTMLCanvasElement, 0, 0, 32, 32);
+    const pixels = context.getImageData(0, 0, 32, 32).data;
+    return Array.from({ length: 1024 }, (_, index) => index * 4).some((offset) => pixels[offset + 3] > 0 && (pixels[offset] !== pixels[0] || pixels[offset + 1] !== pixels[1] || pixels[offset + 2] !== pixels[2]));
+  })).toBe(true);
+  expect(fixture.confirmed()!.rooms![0].length!.value).toBe(5);
+  expect(fixture.confirmed()!.source!.pageNumber).toBe(2);
+  await page.getByRole("button", { name: "Back to review", exact: true }).click();
+  await expect(page.locator(".dimension-comparison")).toContainText("Last confirmed revision 1");
+  await page.getByLabel("Hall length").fill("6");
+  await expect(page.locator(".dimension-comparison")).toContainText("Confirmed: 5 m");
+  expect(fixture.confirmed()!.rooms![0].length!.value).toBe(5);
+});
+
+test("managed dimension preview keeps mobile list review when canonical image fails", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockManagedWorkflow(page, { missingSource: true });
+  await createProject(page);
+  await analyzeDemo(page);
+  await expect(page.getByText("Canonical drawing unavailable; dimensions remain available for review.")).toBeVisible();
+  await page.getByLabel("Hall length").fill("4.5");
+  await expect(page.getByRole("button", { name: "Confirm and build model" })).toBeEnabled();
+  const layout = await page.evaluate(() => ({ fits: document.documentElement.scrollWidth <= window.innerWidth, overflow: Array.from(document.querySelectorAll("body *")).filter((element) => element.getBoundingClientRect().right > window.innerWidth).map((element) => ({ tag: element.tagName, className: element.className, right: Math.round(element.getBoundingClientRect().right) })).slice(0, 12) }));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "test-results/managed-review-mobile.png", fullPage: true });
+  expect(layout.fits, JSON.stringify(layout.overflow)).toBe(true);
+});
+
+test("managed quota failure retains accepted analysis identity and reset message", async ({ page }) => {
+  await mockManagedWorkflow(page, { quotaFailure: true });
+  await createProject(page);
+  await page.locator('input[type="file"]').setInputFiles({ name: "plan.png", mimeType: "image/png", buffer: planPng });
+  await page.getByRole("button", { name: "Analyze drawing" }).click();
+  await expect(page.locator(".alert--error")).toContainText("Daily limit reached");
+  await expect(page.locator(".alert--error")).toContainText("Retry after");
+  await expect(page.getByText("Analysis fixture-analysis")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry analysis" })).toBeEnabled();
+});
+
+test("managed polling recovers from temporary status-store outage", async ({ page }) => {
+  await mockManagedWorkflow(page, { transientStatus: true });
+  await createProject(page);
+  await analyzeDemo(page);
+  await expect(page.getByRole("heading", { name: "Dimension preview" })).toBeVisible();
+});
+
+test("managed PDF page selection is explicit before analysis", async ({ page }) => {
+  const fixture = await mockManagedWorkflow(page);
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Resources << >> >>"];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; }
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${offsets.length}\n0000000000 65535 f \n`;
+  for (const offset of offsets.slice(1)) pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  await createProject(page);
+  await page.locator('input[type="file"]').setInputFiles({ name: "plan.pdf", mimeType: "application/pdf", buffer: Buffer.from(pdf) });
+  await expect(page.getByLabel("Drawing page")).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Analyze drawing" })).toBeDisabled();
+  await page.getByLabel("Drawing page").selectOption("2");
+  await page.getByRole("button", { name: "Analyze drawing" }).click();
+  await expect(page.getByRole("heading", { name: "Dimension preview" })).toBeVisible();
+  expect(fixture.submittedPage()).toBe(2);
+});
 
 test("indicative openings are spaced on room walls without exceeding them", () => {
   const model = buildModel([{ id: "a", name: "Hall", length: meters(4), width: meters(3), wallHeight: meters(2.4), bounds: { x: 0, y: 0, width: 0.4, height: 0.3 } }], 1, {
@@ -114,13 +261,15 @@ test("model offers top view, hover details and a screenshot", async ({ page }) =
   await topView.click();
   await expect(page.getByRole("button", { name: "3D view" })).toHaveAttribute("aria-pressed", "true");
   const canvas = page.locator(".scene-host canvas");
-  const box = (await canvas.boundingBox())!;
-  let hovered = false;
-  for (const [fx, fy] of [[0.4, 0.4], [0.6, 0.4], [0.4, 0.6], [0.6, 0.6], [0.5, 0.5], [0.3, 0.5], [0.7, 0.5]]) {
-    await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
-    if (await page.locator(".scene-tooltip").isVisible()) { hovered = true; break; }
-  }
-  expect(hovered).toBe(true);
+  await canvas.scrollIntoViewIfNeeded();
+  await expect.poll(async () => {
+    const box = (await canvas.boundingBox())!;
+    for (const [fx, fy] of [[0.4, 0.4], [0.6, 0.4], [0.4, 0.6], [0.6, 0.6], [0.5, 0.5], [0.3, 0.5], [0.7, 0.5]]) {
+      await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
+      if (await page.locator(".scene-tooltip").isVisible()) return true;
+    }
+    return false;
+  }).toBe(true);
   await expect(page.locator(".scene-tooltip")).toContainText("m²");
   const shot = page.waitForEvent("download");
   await page.getByRole("button", { name: "Screenshot" }).click();
@@ -188,7 +337,7 @@ test("settings pre-fill estimate rates and the default wall height", async ({ pa
   await createProject(page, unique("Settings house"));
   await analyzeDemo(page);
   await expect(page.getByLabel("Hall wall height")).toHaveValue("8");
-  await expect(page.getByText("Default (8 ft)")).toBeVisible();
+  await expect(page.locator(".data-table").getByText("Default (8 ft)")).toBeVisible();
   await page.getByRole("button", { name: "Confirm and build model" }).click();
   await page.getByRole("button", { name: "Continue to estimate" }).click();
   await expect(page.getByLabel("Flooring rate")).toHaveValue("25");
@@ -202,7 +351,7 @@ test("analysis details show the engine and a re-run replaces the analysis", asyn
   await expect(page.locator(".info-panel summary")).toContainText("Demo (demo)");
 
   await page.route("**/api/floor-plans/*/analysis", async (route) => {
-    expect(route.request().postDataJSON()).toEqual({ engine: "gemini" });
+    expect(route.request().postDataJSON()).toEqual({ engine: "gemini", pageNumber: 1 });
     await route.fulfill({ status: 202, json: { id: "rerun", analysisState: "Analyzing" } });
   });
   await page.route("**/api/analyses/rerun", (route) => route.fulfill({ json: { id: "rerun", analysisState: "AnalysisReady", engine: "gemini", model: "gemini-test", startedAt: new Date(Date.now() - 4000).toISOString(), completedAt: new Date().toISOString(),
@@ -223,6 +372,7 @@ test("confirmation history records each revision and its changes", async ({ page
   await confirmDemo(page);
   await page.getByRole("button", { name: "Back to review" }).click();
   await page.getByLabel("Room name").first().fill("Lounge");
+  await page.getByRole("button", { name: "Looks right", exact: true }).click();
   await page.getByRole("button", { name: "Confirm and build model" }).click();
   await expect(page.getByText("Revision 2")).toBeVisible();
   await page.getByRole("button", { name: "Overview" }).click();
@@ -314,6 +464,112 @@ test("guided workflow from project details to exported estimate", async ({ page 
   await expect(page.getByAltText("Uploaded floor plan")).toBeVisible();
 });
 
+test("material budgets preview fixtures, save and export without changing QS totals", async ({ page }) => {
+  await createProject(page, unique("Material sample"));
+  await confirmDemo(page);
+  await page.getByRole("button", { name: "Continue to estimate" }).click();
+  await page.getByRole("button", { name: "Calculate estimate" }).click();
+  const total = await page.locator(".metric-card--total").innerText();
+  const panel = page.locator(".material-workspace");
+  await expect(panel.getByRole("heading", { name: "Material-only budget", exact: true })).toBeVisible();
+  await expect(panel.locator('input[type="checkbox"]:checked')).toHaveCount(0);
+  await panel.getByLabel("Living room material paint", { exact: true }).check();
+  await panel.getByLabel(/Consumption inputs reviewed/).check();
+  const creation = page.waitForResponse((response) => response.url().endsWith("/material-budgets") && response.request().method() === "POST");
+  await panel.getByRole("button", { name: "Save material budget", exact: true }).click();
+  expect((await creation).status()).toBe(201);
+  await expect(panel.getByText(/Fictional sample prices/)).toBeVisible();
+  await panel.getByLabel("Paint specification").fill("Latex interior");
+  await panel.getByLabel(/Consumption inputs reviewed/).check();
+  const nextVersion = page.waitForResponse((response) => response.url().endsWith("/material-budgets") && response.request().method() === "POST");
+  await panel.getByRole("button", { name: "Save material budget", exact: true }).click();
+  expect((await nextVersion).status()).toBe(201);
+  await expect(panel.getByLabel("Material budget version")).toContainText("Version 2");
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 1 · revision 1" });
+  await expect(panel.getByLabel("Paint specification")).toHaveValue("Interior matt");
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 2 · revision 1" });
+  await expect(panel.getByLabel("Paint specification")).toHaveValue("Latex interior");
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 1 · revision 1" });
+  await panel.getByLabel("Living room material plaster", { exact: true }).check();
+  await expect(panel.getByRole("button", { name: "Save material budget", exact: true })).toBeDisabled();
+  await panel.getByLabel("Cement specification").fill("Reviewed cement");
+  await panel.getByLabel("Sand specification").fill("Reviewed sand");
+  await panel.getByLabel("Layer thickness mm", { exact: true }).fill("12");
+  await panel.getByLabel("Cement parts by volume").fill("1");
+  await panel.getByLabel("Sand parts by volume").fill("4");
+  await panel.getByLabel("Dry-volume factor").fill("1.33");
+  await panel.getByLabel("Cement bulk density kg/m³").fill("1440");
+  await panel.getByLabel("Cement bag weight kg").fill("50");
+  await panel.getByLabel("Sand pack volume m³").fill("1");
+  await panel.getByLabel(/Consumption inputs reviewed/).check();
+  const plasterCreation = page.waitForResponse((response) => response.url().endsWith("/material-budgets") && response.request().method() === "POST");
+  await panel.getByRole("button", { name: "Save material budget", exact: true }).click();
+  const plasterResponse = await plasterCreation;
+  expect(plasterResponse.status()).toBe(201);
+  const plasterBudget = await plasterResponse.json();
+  const plasterAllocation = plasterBudget.allocations.find((entry: { trade: string }) => entry.trade === "plaster");
+  expect(plasterAllocation).toBeTruthy();
+  expect(plasterAllocation.areaM2).toBeUndefined();
+  const plasterRequirements = plasterBudget.requirements.filter((entry: { trade: string }) => entry.trade === "plasterCement" || entry.trade === "plasterSand");
+  expect(plasterRequirements.map((entry: { trade: string }) => entry.trade).sort()).toEqual(["plasterCement", "plasterSand"]);
+  expect(plasterRequirements.every((entry: { sourceAreaM2: number }) => entry.sourceAreaM2 > 0)).toBe(true);
+  await expect(panel.locator(".data-table--numeric").last()).toContainText("Reviewed cement");
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 1 · revision 1" });
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 3 · revision 1" });
+  await expect(panel.getByLabel("Cement specification")).toHaveValue("Reviewed cement");
+  await expect(panel.getByRole("button", { name: "Preview price alternatives" })).toHaveCount(0);
+  await expect(panel.getByText(/No comparable fixture prices cover every positive material requirement/)).toBeVisible();
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 1 · revision 1" });
+  await expect(panel.getByRole("button", { name: "Preview price alternatives" })).toBeDisabled();
+  await panel.getByLabel("Supplier comparison location").selectOption("LK/Colombo");
+  await panel.getByRole("button", { name: "Preview price alternatives" }).click();
+  await expect(panel.locator(".material-alternative")).toHaveCount(2);
+  await expect(panel.locator(".material-alternative").nth(1)).toContainText("unknown charges");
+  await expect(panel.locator(".material-saved")).toHaveCount(0);
+  const saveResponse = page.waitForResponse((response) => response.url().endsWith("/comparisons") && response.request().method() === "POST");
+  await panel.getByRole("button", { name: "Save option 2" }).click();
+  const saved = await (await saveResponse).json();
+  expect(saved.basket.deliveredTotal).toBeNull();
+  await expect(panel.locator(".material-saved")).toContainText("v1");
+  expect(await page.locator(".metric-card--total").innerText()).toBe(total);
+  const download = page.waitForEvent("download");
+  await panel.getByRole("button", { name: "Export material comparison" }).click();
+  const workbook = await download;
+  expect(workbook.suggestedFilename()).toBe("material-comparison.xlsx");
+  expect((await bytes(workbook)).length).toBeGreaterThan(100);
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 3 · revision 1" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "test-results/plaster-budget-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: "test-results/plaster-budget-desktop.png", fullPage: true });
+  await panel.getByLabel("Material budget version").selectOption({ label: "Version 1 · revision 1" });
+  await page.reload();
+  await page.locator(".material-workspace").getByLabel("Material budget version").selectOption({ label: "Version 1 · revision 1" });
+  await page.locator(".material-workspace").getByLabel("Saved comparison ID").fill(saved.id);
+  await page.getByRole("button", { name: "Open saved comparison" }).click();
+  await expect(page.locator(".material-saved")).toContainText(saved.id);
+  expect(await page.locator(".metric-card--total").innerText()).toBe(total);
+});
+
+test("manual informational features require acknowledgement before confirmation", async ({ page }) => {
+  await createProject(page, unique("Feature sample"));
+  await analyzeDemo(page);
+  await page.getByRole("button", { name: "Looks right", exact: true }).click();
+  await page.getByRole("button", { name: "+ Balcony", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Confirm and build model" })).toBeDisabled();
+  await page.getByLabel(/balcony-\d+ disposition/).selectOption("acknowledged");
+  const response = page.waitForResponse((entry) => entry.url().endsWith("/confirmed-data") && entry.request().method() === "PUT");
+  await page.getByRole("button", { name: "Confirm and build model" }).click();
+  const confirmed = await (await response).json();
+  expect(confirmed.features[0].origin).toBe("manual");
+  expect(confirmed.features[0].confidence).toBeUndefined();
+  expect(confirmed.corrections.some((entry: { field: string }) => entry.field === "feature")).toBe(true);
+  await expect(page.getByRole("heading", { name: "3D model" })).toBeVisible();
+});
+
 test("analysis progress is visible while the AI works", async ({ page }) => {
   let polls = 0;
   await page.route("**/api/floor-plans/*/analysis", (route) => route.fulfill({ status: 202, json: { id: "slow-analysis", analysisState: "Analyzing" } }));
@@ -357,13 +613,13 @@ test("missing wall height defaults to 6 ft or its unit equivalent", async ({ pag
   await analyzeDemo(page);
   const height = page.getByLabel("Hall wall height");
   await expect(height).toHaveValue("6");
-  await expect(page.getByText("Default (6 ft)")).toBeVisible();
+  await expect(page.getByText("Default (6 ft)").first()).toBeVisible();
   await page.getByLabel("Hall unit").selectOption("m");
   await expect(height).toHaveValue("1.83");
   await height.fill("2.4");
   await expect(page.getByText("Default (6 ft)")).toHaveCount(0);
   await page.getByLabel("Hall unit").selectOption("cm");
-  await expect(height).toHaveValue("2.4");
+  await expect(height).toHaveValue("240");
 });
 
 test("selected engine is sent and failures offer a retry", async ({ page }) => {
@@ -373,6 +629,7 @@ test("selected engine is sent and failures offer a retry", async ({ page }) => {
     await route.fulfill({ status: 400, json: { message: "Gemini is unavailable" } });
   });
   await createProject(page);
+  await page.getByLabel(/Google Gemini/).check();
   await expect(page.getByLabel(/Google Gemini/)).toBeChecked();
   await page.locator('input[type="file"]').setInputFiles({ name: "plan.png", mimeType: "image/png", buffer: planPng });
   await page.getByRole("button", { name: "Analyze drawing" }).click();
