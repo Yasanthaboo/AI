@@ -30,7 +30,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <ThemeProvider>
-          <AuthProvider supabaseUrl={process.env.SUPABASE_URL ?? ""} supabaseAnonKey={process.env.SUPABASE_ANON_KEY ?? ""}>
+          <AuthProvider required={process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"} supabaseUrl={(process.env.SUPABASE_URL ?? "").trim()} supabaseAnonKey={(process.env.SUPABASE_ANON_KEY ?? "").trim()}>
             <PlanProvider>{children}</PlanProvider>
           </AuthProvider>
         </ThemeProvider>

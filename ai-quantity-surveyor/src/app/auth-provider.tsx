@@ -125,10 +125,11 @@ function AuthPanel({ client, initialMode, onRecoveryComplete }: {
   </main>;
 }
 
-export default function AuthProvider({ children, supabaseUrl, supabaseAnonKey }: {
+export default function AuthProvider({ children, supabaseUrl, supabaseAnonKey, required = false }: {
   children: ReactNode;
   supabaseUrl: string;
   supabaseAnonKey: string;
+  required?: boolean;
 }) {
   const hasAnyConfig = Boolean(supabaseUrl || supabaseAnonKey);
   const hasCompleteConfig = Boolean(supabaseUrl && supabaseAnonKey);
@@ -167,7 +168,7 @@ export default function AuthProvider({ children, supabaseUrl, supabaseAnonKey }:
     };
   }, [client]);
 
-  if (hasAnyConfig && !hasCompleteConfig) return <main className="auth-screen"><section className="auth-panel"><h1>Sign-in is not configured</h1><p className="alert alert--error">Set both SUPABASE_URL and SUPABASE_ANON_KEY in the web service environment.</p></section></main>;
+  if ((required || hasAnyConfig) && !hasCompleteConfig) return <main className="auth-screen"><section className="auth-panel"><h1>Sign-in is not configured</h1><p className="alert alert--error">Set both SUPABASE_URL and SUPABASE_ANON_KEY in the web service environment, not only on the API service.</p></section></main>;
   if (!client) return <AuthContext.Provider value={{ enabled: false, user: null, signOut: async () => {} }}>{children}</AuthContext.Provider>;
   if (!ready) return <main className="auth-screen"><p className="loading-card" role="status"><span className="spinner" aria-hidden="true" /> Checking your session…</p></main>;
   if (loadError) return <main className="auth-screen"><section className="auth-panel"><h1>Session unavailable</h1><p className="alert alert--error" role="alert">{loadError}</p><button type="button" className="button button--primary auth-submit" onClick={() => void client.auth.signOut()}>Return to sign in</button></section></main>;
