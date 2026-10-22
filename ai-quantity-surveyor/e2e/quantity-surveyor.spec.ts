@@ -7,6 +7,31 @@ const planPng = Buffer.from(
   "base64",
 );
 const meters = (value: number) => ({ value, unit: "m" });
+const integrationAPI = process.env.PLAYWRIGHT_API_URL;
+const legacyAccount = { plan: { id: "studio", name: "Studio", features: ["aiAnalysis", "model3d", "materials", "exports", "designStudio"] }, assignmentSource: "demo", demoSwitchingEnabled: true };
+const legacyUser = { id: "legacy-test-user", email: "legacy@example.test", aud: "authenticated", role: "authenticated", app_metadata: { provider: "email", providers: ["email"] }, user_metadata: {}, identities: [], created_at: "2026-10-21T00:00:00Z" };
+
+test.beforeAll(async ({ request }) => {
+  test.skip(!integrationAPI || process.env.SURVEYOR_E2E_ISOLATED !== "true", "Legacy integration tests require an explicitly opted-in disposable local API.");
+  const target = new URL(integrationAPI!);
+  if (target.hostname !== "127.0.0.1" || Number(target.port) < 18000) throw new Error("Refusing legacy integration tests against a non-isolated API URL.");
+  const response = await request.put(`${integrationAPI}/api/account/plan`, { data: { planId: "studio" } });
+  expect(response.status()).toBe(200);
+});
+
+test.beforeEach(async ({ page }) => {
+  await page.route("**/auth/v1/token**", (route) => route.fulfill({ json: { access_token: "legacy-test-token", token_type: "bearer", expires_in: 3600, refresh_token: "legacy-refresh-token", user: legacyUser } }));
+  await page.route("**/api/account/plan", (route) => route.fulfill({ json: legacyAccount }));
+  await page.goto("/");
+  const email = page.getByLabel("Email", { exact: true });
+  await expect(email.or(page.getByRole("heading", { name: "Projects", exact: true }))).toBeVisible();
+  if (await email.isVisible()) {
+    await email.fill(legacyUser.email);
+    await page.getByLabel("Password", { exact: true }).fill("fixture-password-1");
+    await page.getByRole("button", { name: "Sign in", exact: true }).last().click();
+  }
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+});
 
 async function bytes(download: Download) {
   const chunks: Buffer[] = [];
@@ -51,6 +76,7 @@ async function mockManagedWorkflow(page: Page, options: { missingSource?: boolea
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path === "/api/account/plan") return route.fulfill({ json: legacyAccount });
     if (path === "/api/analysis-engines") return route.fulfill({ json: ["demo"] });
     if (path === "/api/projects" && request.method() === "GET") return route.fulfill({ json: [] });
     if (path === "/api/projects" && request.method() === "POST") return route.fulfill({ status: 201, json: { id: "fixture-project", name: "Preview fixture", status: "Created", createdAt: new Date().toISOString() } });
@@ -346,6 +372,7 @@ test("confirmation history records each revision and its changes", async ({ page
   await confirmDemo(page);
   await page.getByRole("button", { name: "Back to review" }).click();
   await page.getByLabel("Room name").first().fill("Lounge");
+  await page.getByRole("button", { name: "Looks right", exact: true }).click();
   await page.getByRole("button", { name: "Confirm and build model" }).click();
   await expect(page.getByText("Revision 2")).toBeVisible();
   await page.getByRole("button", { name: "Overview" }).click();
@@ -506,7 +533,7 @@ test("material budgets preview fixtures, save and export without changing QS tot
   await expect(panel.locator(".material-saved")).toContainText("v1");
   expect(await page.locator(".metric-card--total").innerText()).toBe(total);
   const download = page.waitForEvent("download");
-  await panel.getByRole("link", { name: "Export material comparison" }).click();
+  await panel.getByRole("button", { name: "Export material comparison" }).click();
   const workbook = await download;
   expect(workbook.suggestedFilename()).toBe("material-comparison.xlsx");
   expect((await bytes(workbook)).length).toBeGreaterThan(100);
@@ -602,6 +629,7 @@ test("selected engine is sent and failures offer a retry", async ({ page }) => {
     await route.fulfill({ status: 400, json: { message: "Gemini is unavailable" } });
   });
   await createProject(page);
+  await page.getByLabel(/Google Gemini/).check();
   await expect(page.getByLabel(/Google Gemini/)).toBeChecked();
   await page.locator('input[type="file"]').setInputFiles({ name: "plan.png", mimeType: "image/png", buffer: planPng });
   await page.getByRole("button", { name: "Analyze drawing" }).click();

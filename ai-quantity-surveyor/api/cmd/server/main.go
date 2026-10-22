@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,13 +16,20 @@ import (
 
 	"github.com/example/ai-quantity-surveyor/api/internal/analysis"
 	"github.com/example/ai-quantity-surveyor/api/internal/estimate"
+	"github.com/example/ai-quantity-surveyor/api/internal/exterior"
 	"github.com/example/ai-quantity-surveyor/api/internal/materials"
+	"github.com/example/ai-quantity-surveyor/api/internal/plans"
+	"github.com/example/ai-quantity-surveyor/api/internal/planseed"
 	"github.com/example/ai-quantity-surveyor/api/internal/portfolio"
 	"github.com/example/ai-quantity-surveyor/api/internal/project"
 	"github.com/example/ai-quantity-surveyor/api/internal/roomdesign"
 )
 
 func main() {
+	seedConfig, seedErr := planseed.FromEnvironment(os.Getenv)
+	if seedErr != nil {
+		log.Fatal(seedErr)
+	}
 	verifier, ownerID, authErr := authConfigurationFromEnvironment()
 	if authErr != nil {
 		log.Fatal(authErr)
@@ -51,6 +59,17 @@ func main() {
 	if closeStore != nil {
 		defer closeStore()
 	}
+	planStore, planErr := plans.NewStore(nil)
+	if postgresService, ok := service.(*project.PostgresService); ok {
+		planStore, planErr = plans.NewStore(postgresService.DB())
+	}
+	if planErr != nil {
+		log.Fatal(planErr)
+	}
+	demoPlans, planErr := planDemoModeFromEnvironment()
+	if planErr != nil {
+		log.Fatal(planErr)
+	}
 	var analyzer analysis.Analyzer = analysis.DemoAnalyzer{}
 	engines := map[string]analysis.Analyzer{"demo": analyzer}
 	availableEngines := []string{"demo"}
@@ -77,6 +96,10 @@ func main() {
 	estimateService := estimate.NewService(analysisService)
 	var materialRepository materials.Repository = materials.NewMemoryRepository()
 	var designRepository roomdesign.Repository = roomdesign.NewMemoryRepository()
+	exteriorStore, exteriorErr := exterior.NewStore(nil)
+	if exteriorErr != nil {
+		log.Fatal(exteriorErr)
+	}
 	if postgresService, ok := service.(*project.PostgresService); ok {
 		analysisRepository, repositoryErr := analysis.NewPostgresRepository(postgresService.DB())
 		if repositoryErr != nil {
@@ -97,6 +120,10 @@ func main() {
 		designRepository, repositoryErr = roomdesign.NewPostgresRepository(postgresService.DB())
 		if repositoryErr != nil {
 			log.Fatal(repositoryErr)
+		}
+		exteriorStore, exteriorErr = exterior.NewStore(postgresService.DB())
+		if exteriorErr != nil {
+			log.Fatal(exteriorErr)
 		}
 	}
 	limits, quotaErr := providerLimitsFromEnvironment()
@@ -122,7 +149,24 @@ func main() {
 		log.Fatal(err)
 	}
 	defer analysisService.Close()
+	if seedConfig.Enabled {
+		postgresService, ok := service.(*project.PostgresService)
+		if !ok {
+			log.Fatal("SEED_PLAN_USERS requires PostgreSQL-backed projects")
+		}
+		seedContext, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		users, err := planseed.Run(seedContext, seedConfig, postgresService, analysisService, estimateService, planStore)
+		cancel()
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, user := range users {
+			log.Printf("Plan preview account ready: plan=%s email=%s created=%t", user.PlanID, user.Email, user.Created)
+		}
+	}
 	mux := http.NewServeMux()
+	registerPlanHandlers(mux, planStore, demoPlans)
+	registerExteriorHandlers(mux, service, analysisService, exteriorStore)
 	materialService := materials.NewService(estimateService, analysisService, service, materialRepository)
 	materialService.EnablePlasterMaterials(os.Getenv("SURVEYOR_ENABLE_PLASTER_MATERIALS") == "true")
 	registerMaterialHandlers(mux, service, materialService)
@@ -249,13 +293,17 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("AI Quantity Surveyor API listening on :%s", port)
-	var handler http.Handler = mux
+	var handler http.Handler = withPlanAccess(mux, planStore, demoPlans, defaultEngine)
 	if verifier != nil {
 		handler = verifier.Middleware(handler)
 	}
-	if err := http.ListenAndServe(":"+port, withCORS(handler)); err != nil {
+	if err := apiHTTPServer(":"+port, withCORS(handler)).ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func apiHTTPServer(address string, handler http.Handler) *http.Server {
+	return &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 7 * time.Minute, IdleTimeout: time.Minute, MaxHeaderBytes: 64 << 10}
 }
 
 func withCORS(next http.Handler) http.Handler {
@@ -264,10 +312,18 @@ func withCORS(next http.Handler) http.Handler {
 		allowedOrigin = "http://localhost:3001"
 	}
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("X-Content-Type-Options", "nosniff")
+		writer.Header().Set("X-Frame-Options", "DENY")
+		writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		writer.Header().Add("Vary", "Origin")
+		writer.Header().Add("Vary", "Authorization")
+		if strings.HasPrefix(request.URL.Path, "/api/") {
+			writer.Header().Set("Cache-Control", "private, no-store")
+		}
 		writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		writer.Header().Set("Access-Control-Expose-Headers", "ETag, Retry-After")
-		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS")
+		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if request.Method == http.MethodOptions {
 			writer.WriteHeader(http.StatusNoContent)
 			return

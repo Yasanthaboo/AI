@@ -10,6 +10,28 @@ services:
     envVars:
       - key: PORT
         value: "8080"
+      - key: APP_ENV
+        value: production
+      - key: AUTH_ALLOW_ANONYMOUS
+        value: "false"
+      - key: PLAN_DEMO_MODE
+        value: "false"
+      - key: SEED_PLAN_USERS
+        value: "false"
+      - key: SEED_PLAN_FREE_EMAIL
+        value: demo-free@quantity-surveyor.test
+      - key: SEED_PLAN_PRO_EMAIL
+        value: demo-pro@quantity-surveyor.test
+      - key: SEED_PLAN_STUDIO_EMAIL
+        value: demo-studio@quantity-surveyor.test
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SEED_PLAN_FREE_PASSWORD
+        sync: false
+      - key: SEED_PLAN_PRO_PASSWORD
+        sync: false
+      - key: SEED_PLAN_STUDIO_PASSWORD
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: SUPABASE_URL

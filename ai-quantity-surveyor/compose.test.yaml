@@ -12,6 +12,11 @@ services:
       retries: 20
 
   api:
+    mem_limit: 512m
+    pids_limit: 128
+    cpus: 1.0
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -20,6 +25,8 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: http://localhost:3002
       AUTH_ALLOW_ANONYMOUS: "true"
+      APP_ENV: demo
+      PLAN_DEMO_MODE: "true"
       SURVEYOR_ENABLE_PLASTER_MATERIALS: "true"
     ports:
       - "127.0.0.1:${SURVEYOR_TEST_API_PORT:-18081}:8080"

@@ -18,7 +18,7 @@ const session = {
   },
 };
 
-const room = { id: "kitchen", name: "Kitchen", length: { value: 4, unit: "m" }, width: { value: 3.2, unit: "m" }, wallHeight: { value: 2.7, unit: "m" } };
+const room = { id: "kitchen", name: "Kitchen", length: { value: 4, unit: "m" }, width: { value: 3.1999999999999997, unit: "m" }, wallHeight: { value: 2.7, unit: "m" } };
 const candidate = { id: "analysis-1", floorPlanId: "plan-1", analysisState: "AnalysisReady", rooms: [room], doors: [], windows: [] };
 const confirmation = { analysisId: "analysis-1", revision: 3, confirmedAt: "2026-10-20T00:00:00Z", candidate: { ...candidate, confirmationRevision: 3 } };
 const priorConfirmation = { analysisId: "analysis-1", revision: 2, confirmedAt: "2026-10-19T00:00:00Z", candidate: { ...candidate, confirmationRevision: 2, rooms: [{ ...room, length: { value: 3.8, unit: "m" } }] } };
@@ -29,10 +29,12 @@ const concepts = [
   { id: "concept-2", projectId: project.id, analysisId: candidate.id, confirmationRevision: 3, roomId: room.id, roomName: room.name, style: "Contemporary", palette: "Warm neutrals", model: "gpt-image-1", selected: false, createdAt: "2026-10-20T00:00:00Z" },
 ];
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+const studioAccount = { plan: { id: "studio", name: "Studio", priceLabel: "Coming soon", description: "Studio fixture", features: ["aiAnalysis", "model3d", "materials", "exports", "designStudio"] }, assignmentSource: "manual", demoSwitchingEnabled: false };
 
 test("confirmed room design concepts can be generated, selected, and removed", async ({ page }) => {
   let savedConcepts: typeof concepts = [];
   let generationPayload: Record<string, unknown> | null = null;
+  let firstImageReads = 0;
   await page.route("**/auth/v1/token**", async (route) => route.fulfill({ status: 200, json: session }));
   await page.route("**/auth/v1/logout**", async (route) => route.fulfill({ status: 204, body: "" }));
   await page.route("**/api/**", async (route) => {
@@ -42,6 +44,7 @@ test("confirmed room design concepts can be generated, selected, and removed", a
       expect(new URL(request.url()).origin).toBe(new URL(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").origin);
       expect(request.headers().authorization).toBe(`Bearer ${session.access_token}`);
     }
+    if (path === "/api/account/plan") return route.fulfill({ json: studioAccount });
     if (path === "/api/analysis-engines") return route.fulfill({ json: ["demo"] });
     if (path === "/api/projects" && request.method() === "GET") return route.fulfill({ json: [summary] });
     if (path === `/api/projects/${project.id}/summary`) return route.fulfill({ json: summary });
@@ -56,7 +59,10 @@ test("confirmed room design concepts can be generated, selected, and removed", a
       savedConcepts = concepts;
       return route.fulfill({ status: 201, json: concepts });
     }
-    if (path.startsWith("/api/room-designs/") && path.endsWith("/image")) return route.fulfill({ contentType: "image/png", body: png });
+    if (path.startsWith("/api/room-designs/") && path.endsWith("/image")) {
+      if (path.includes("concept-1") && ++firstImageReads === 1) return route.fulfill({ status: 503, json: { message: "Temporary image outage" } });
+      return route.fulfill({ contentType: "image/png", body: png });
+    }
     if (path === "/api/room-designs/concept-1/selection") {
       savedConcepts = concepts.map((concept) => ({ ...concept, selected: concept.id === "concept-1" }));
       return route.fulfill({ json: { selected: true } });
@@ -105,10 +111,15 @@ test("confirmed room design concepts can be generated, selected, and removed", a
   await page.getByRole("button", { name: "Generate two concepts" }).click();
   await expect(page.getByRole("heading", { name: "Option 1" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Option 2" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Concept 1 image error", exact: true })).toContainText("HTTP 503");
+  await page.getByRole("button", { name: "Retry image 1", exact: true }).click();
   await expect(page.locator(".design-concept img")).toHaveCount(2);
   for (const image of await page.locator(".design-concept img").all()) {
     await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
   }
+  const downloadEvent = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download concept 1", exact: true }).click();
+  expect((await downloadEvent).suggestedFilename()).toBe("kitchen-revision-3-concept-1.png");
   expect(generationPayload).toMatchObject({ roomId: "kitchen", confirmationRevision: 3, style: "Contemporary", palette: "Warm neutrals", preferences: "Reading nook and hidden storage" });
   await page.getByRole("button", { name: "Select design" }).first().click();
   await expect(page.locator(".design-concept--selected .badge")).toContainText("Selected");
@@ -123,6 +134,7 @@ test("NVIDIA Nemotron appears when the API advertises it", async ({ page }) => {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path === "/api/account/plan") return route.fulfill({ json: studioAccount });
     if (path === "/api/analysis-engines") return route.fulfill({ json: ["demo", "nvidia"] });
     if (path === "/api/projects" && request.method() === "GET") return route.fulfill({ json: [] });
     if (path === "/api/projects" && request.method() === "POST") return route.fulfill({ status: 201, json: { ...project, id: "nvidia-project" } });
@@ -190,6 +202,7 @@ test("material defaults and comparison facts remain readable in both themes", as
   await page.route("**/auth/v1/token**", async (route) => route.fulfill({ status: 200, json: session }));
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/account/plan") return route.fulfill({ json: studioAccount });
     if (path === "/api/analysis-engines") return route.fulfill({ json: ["demo"] });
     if (path === "/api/projects") return route.fulfill({ json: [summary] });
     if (path === `/api/projects/${project.id}/summary`) return route.fulfill({ json: summary });

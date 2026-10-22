@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { authenticatedFetch, formatDate, formatMoney, formatNumber, jsonInit, request, type EstimateVersion, type MaterialAllocation, type MaterialBudget, type MaterialComparison, type MaterialOffer, type MaterialPreview, type MaterialRecipe, type MaterialSelection } from "./api";
+import { API, authenticatedFetch, formatDate, formatMoney, formatNumber, jsonInit, request, type EstimateVersion, type MaterialAllocation, type MaterialBudget, type MaterialComparison, type MaterialOffer, type MaterialPreview, type MaterialRecipe, type MaterialSelection } from "./api";
 import type { Settings } from "./settings";
 
 const labels: Record<string, string> = { paint: "Paint", wallTile: "Wall tiles", floorTile: "Floor tiles", plaster: "Cement + sand plaster", plasterCement: "Cement", plasterSand: "Sand", premixPlaster: "Premixed plaster" };
@@ -99,7 +99,7 @@ export default function MaterialBudgetPanel({ estimate, projectId, settings }: {
     if (!saved) return;
     setBusy(true); setError("");
     try {
-      const response = await authenticatedFetch(`/api/material-comparisons/${encodeURIComponent(saved.id)}/export`);
+      const response = await authenticatedFetch(`${API}/api/material-comparisons/${encodeURIComponent(saved.id)}/export`);
       if (!response.ok) throw new Error("Material comparison export failed.");
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");

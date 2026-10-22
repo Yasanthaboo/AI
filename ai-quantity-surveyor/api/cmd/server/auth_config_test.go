@@ -3,6 +3,16 @@ package main
 import "testing"
 
 func TestAuthConfigurationRequiresExplicitSecureDeploymentSettings(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Run("production refuses anonymous opt in", func(t *testing.T) {
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("SUPABASE_URL", "")
+		t.Setenv("SUPABASE_ANON_KEY", "")
+		t.Setenv("AUTH_ALLOW_ANONYMOUS", "true")
+		if _, _, err := authConfigurationFromEnvironment(); err == nil {
+			t.Fatal("production anonymous access accepted")
+		}
+	})
 	t.Run("anonymous development requires explicit opt in", func(t *testing.T) {
 		t.Setenv("DATABASE_URL", "")
 		t.Setenv("SUPABASE_URL", "")

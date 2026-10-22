@@ -21,7 +21,10 @@ const authSession = {
 
 test("email signup presents verification guidance", async ({ page }) => {
   await page.route("**/auth/v1/signup**", async (route) => route.fulfill({ status: 200, json: authUser }));
-  await page.goto("/");
+  const response = await page.goto("/");
+  expect(response?.headers()["x-content-type-options"]).toBe("nosniff");
+  expect(response?.headers()["x-frame-options"]).toBe("DENY");
+  expect(response?.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
   await page.getByRole("tab", { name: "Create account" }).click();
   await page.getByLabel("Email").fill("designer@example.test");
   await page.getByLabel("Password", { exact: true }).fill("secure-password-1");
@@ -56,10 +59,23 @@ test("signed-in requests carry the access token and sign-out clears the workspac
 });
 
 test("password reset uses non-enumerating confirmation copy", async ({ page }) => {
-  await page.route("**/auth/v1/recover**", async (route) => route.fulfill({ status: 200, json: {} }));
+  let redirect = "";
+  await page.route("**/auth/v1/recover**", async (route) => { redirect = new URL(route.request().url()).searchParams.get("redirect_to") ?? ""; await route.fulfill({ status: 200, json: {} }); });
   await page.goto("/");
   await page.getByRole("button", { name: "Forgot password?" }).click();
   await page.getByLabel("Email").fill("designer@example.test");
   await page.getByRole("button", { name: "Send reset link" }).click();
   await expect(page.getByRole("status")).toContainText("If an account exists for that email");
+  expect(redirect).toBe(new URL(page.url()).origin);
+});
+
+test("Google sign-in hands off with the approved web redirect", async ({ page }) => {
+  await page.route("**/auth/v1/authorize**", (route) => route.fulfill({ status: 200, contentType: "text/plain", body: "OAuth handoff fixture" }));
+  await page.goto("/");
+  const origin = new URL(page.url()).origin;
+  const authorization = page.waitForRequest((request) => new URL(request.url()).pathname === "/auth/v1/authorize");
+  await page.getByRole("button", { name: "Continue with Google", exact: true }).click();
+  const target = new URL((await authorization).url());
+  expect(target.searchParams.get("provider")).toBe("google");
+  expect(target.searchParams.get("redirect_to")).toBe(origin);
 });

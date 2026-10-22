@@ -2,13 +2,50 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { API, authenticatedFetch, describeMeasurement, jsonInit, request, type Confirmation, type Project, type RoomDesignCapability, type RoomDesignConcept } from "./api";
+import { Download, RefreshCw } from "lucide-react";
+import { API, authenticatedFetch, describeMeasurement, jsonInit, request, type Confirmation, type Measurement, type Project, type RoomDesignCapability, type RoomDesignConcept } from "./api";
 import type { Settings } from "./settings";
+import { PlanGate, usePlans } from "./plans";
 
 const emptyRooms: NonNullable<Confirmation["candidate"]["rooms"]> = [];
 const emptyConcepts: RoomDesignConcept[] = [];
 
-export default function RoomDesignStudio({ project, confirmation, settings, onBack }: { project: Project; confirmation: Confirmation; settings: Settings; onBack: () => void }) {
+function roundedMeasurement(value: Measurement | null | undefined) {
+  return describeMeasurement(value ? { ...value, value: Number(value.value.toFixed(2)) } : value);
+}
+
+function ConceptImage({ concept, index }: { concept: RoomDesignConcept; index: number }) {
+  const [attempt, setAttempt] = useState(0);
+  const [asset, setAsset] = useState<{ url?: string; error?: string }>({});
+  useEffect(() => {
+    let active = true;
+    let objectURL = "";
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const response = await authenticatedFetch(`${API}/api/room-designs/${encodeURIComponent(concept.id)}/image`, { signal: controller.signal });
+        if (!response.ok) throw new Error(`Image unavailable (HTTP ${response.status}).`);
+        const blob = await response.blob();
+        if (blob.type !== "image/png" || blob.size === 0 || blob.size > 8 * 1024 * 1024) throw new Error("The saved image has an invalid format or size.");
+        if (!active) return;
+        objectURL = URL.createObjectURL(blob);
+        setAsset({ url: objectURL });
+      } catch (failure) {
+        if (active) setAsset({ error: failure instanceof Error ? failure.message : "Image could not be loaded." });
+      }
+    };
+    void load();
+    return () => { active = false; controller.abort(); if (objectURL) URL.revokeObjectURL(objectURL); };
+  }, [concept.id, attempt]);
+
+  if (asset.error) return <div className="design-image-placeholder design-image-error" role="group" aria-label={`Concept ${index + 1} image error`}><p role="alert">{asset.error}</p><button type="button" className="button button--ghost button--small" onClick={() => { setAsset({}); setAttempt((current) => current + 1); }}><RefreshCw size={15} aria-hidden="true" />Retry image {index + 1}</button></div>;
+  if (!asset.url) return <div className="design-image-placeholder" role="status" aria-label={`Loading concept ${index + 1}`}><span className="spinner" aria-hidden="true" /></div>;
+  const roomSlug = concept.roomName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "room";
+  return <><Image src={asset.url} alt={`${concept.style} ${concept.palette} concept for ${concept.roomName}`} width={1024} height={1024} sizes="(max-width: 960px) 100vw, 40vw" unoptimized onError={() => setAsset({ error: "The saved image could not be decoded." })} /><div className="design-image-actions"><a className="button button--ghost button--small" href={asset.url} download={`${roomSlug}-revision-${concept.confirmationRevision}-${concept.id}.png`} aria-label={`Download concept ${index + 1}`}><Download size={15} aria-hidden="true" />Download PNG</a></div></>;
+}
+
+export default function RoomDesignStudio({ project, confirmation, settings, onBack, onViewPlans }: { project: Project; confirmation: Confirmation; settings: Settings; onBack: () => void; onViewPlans: () => void }) {
+  const { can } = usePlans();
   const [confirmations, setConfirmations] = useState<Confirmation[]>([confirmation]);
   const [selectedRevision, setSelectedRevision] = useState(confirmation.revision);
   const activeConfirmation = confirmations.find((entry) => entry.revision === selectedRevision) ?? confirmation;
@@ -16,7 +53,6 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
   const [selectedRoomId, setSelectedRoomId] = useState(confirmation.candidate.rooms?.[0]?.id ?? "");
   const [capabilities, setCapabilities] = useState<RoomDesignCapability | null>(null);
   const [designCollection, setDesignCollection] = useState<{ key: string; concepts: RoomDesignConcept[] } | null>(null);
-  const [imageCollection, setImageCollection] = useState<{ key: string; urls: Record<string, string> } | null>(null);
   const [style, setStyle] = useState(settings.designDefaults.style);
   const [palette, setPalette] = useState(settings.designDefaults.palette);
   const [preferences, setPreferences] = useState("");
@@ -30,8 +66,6 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
   const windows = activeConfirmation.candidate.windows?.filter((opening) => opening.roomId === roomId) ?? [];
   const collectionKey = `${project.id}|${roomId}|${revision}`;
   const concepts = designCollection?.key === collectionKey ? designCollection.concepts : emptyConcepts;
-  const imageKey = concepts.map((concept) => concept.id).join("|");
-  const images = imageCollection?.key === imageKey ? imageCollection.urls : {};
 
   useEffect(() => {
     let active = true;
@@ -63,30 +97,8 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
     return () => { active = false; };
   }, [collectionKey, project.id, revision, roomId]);
 
-  useEffect(() => {
-    let active = true;
-    const objectURLs: string[] = [];
-    if (!imageKey) return;
-    Promise.all(imageKey.split("|").map(async (conceptID) => {
-      try {
-        const response = await authenticatedFetch(`${API}/api/room-designs/${encodeURIComponent(conceptID)}/image`);
-        if (!response.ok) return null;
-        const objectURL = URL.createObjectURL(await response.blob());
-        objectURLs.push(objectURL);
-        return [conceptID, objectURL] as const;
-      } catch {
-        return null;
-      }
-    })).then((entries) => {
-      if (active) setImageCollection({ key: imageKey, urls: Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== null)) });
-    });
-    return () => {
-      active = false;
-      for (const objectURL of objectURLs) URL.revokeObjectURL(objectURL);
-    };
-  }, [imageKey]);
-
   const generate = async () => {
+    if (!can("designStudio")) { setError("New room concepts require Studio."); return; }
     if (!room) return;
     setBusy(true);
     setError("");
@@ -137,23 +149,23 @@ export default function RoomDesignStudio({ project, confirmation, settings, onBa
         {confirmations.length > 1 && <label className="field"><span>Confirmed revision</span><select aria-label="Design confirmation revision" value={selectedRevision} onChange={(event) => setSelectedRevision(Number(event.target.value))}>{confirmations.map((entry) => <option key={entry.revision} value={entry.revision}>Revision {entry.revision}</option>)}</select></label>}
         <label className="field"><span>Room</span><select aria-label="Design room" value={roomId} onChange={(event) => setSelectedRoomId(event.target.value)}>{rooms.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
         {room && <dl className="design-room-facts">
-          <div><dt>Length</dt><dd>{describeMeasurement(room.length)}</dd></div>
-          <div><dt>Width</dt><dd>{describeMeasurement(room.width)}</dd></div>
-          <div><dt>Wall height</dt><dd>{describeMeasurement(room.wallHeight)}</dd></div>
+          <div><dt>Length</dt><dd>{roundedMeasurement(room.length)}</dd></div>
+          <div><dt>Width</dt><dd>{roundedMeasurement(room.width)}</dd></div>
+          <div><dt>Wall height</dt><dd>{roundedMeasurement(room.wallHeight)}</dd></div>
           <div><dt>Openings</dt><dd>{doors.length} doors · {windows.length} windows</dd></div>
         </dl>}
         <label className="field"><span>Interior style</span><select value={style} onChange={(event) => setStyle(event.target.value)} disabled={!capabilities?.enabled}>{(capabilities?.styles ?? []).map((entry) => <option key={entry}>{entry}</option>)}</select></label>
         <label className="field"><span>Color palette</span><select value={palette} onChange={(event) => setPalette(event.target.value)} disabled={!capabilities?.enabled}>{(capabilities?.palettes ?? []).map((entry) => <option key={entry}>{entry}</option>)}</select></label>
         <label className="field"><span>Preferences <small>Optional · 300 characters max</small></span><textarea rows={3} maxLength={300} value={preferences} onChange={(event) => setPreferences(event.target.value)} disabled={!capabilities?.enabled} placeholder="For example, reading nook and hidden storage" /></label>
         {!capabilities?.enabled && <p className="alert alert--warning">Image generation is not configured. Set an API-side OpenAI or NVIDIA NIM image provider to enable this studio.</p>}
-        <button type="button" className="button button--primary" disabled={!room || !capabilities?.enabled || busy} onClick={() => void generate()}>{busy ? <><span className="spinner" aria-hidden="true" /> Generating…</> : "Generate two concepts"}</button>
+        {can("designStudio") ? <button type="button" className="button button--primary" disabled={!room || !capabilities?.enabled || busy} onClick={() => void generate()}>{busy ? <><span className="spinner" aria-hidden="true" /> Generating…</> : "Generate two concepts"}</button> : <PlanGate feature="designStudio" onViewPlans={onViewPlans} />}
         {capabilities?.enabled && <p className="small muted">Daily limit: {capabilities.dailyImageLimit} generated images per account. Confirmed room data only; no plan image is sent.</p>}
       </aside>
       <div className="design-results" aria-live="polite">
         <div className="design-results__heading"><h3>{room?.name ?? "Select a room"}</h3><span className="muted small">Revision {revision}</span></div>
         {concepts.length === 0 ? <div className="empty-state"><strong>No concepts saved for this revision</strong><span className="muted">Choose a style and palette, then generate two options.</span></div>
           : <div className="design-concepts">{concepts.map((concept, index) => <article className={`design-concept${concept.selected ? " design-concept--selected" : ""}`} key={concept.id}>
-            {images[concept.id] ? <Image src={images[concept.id]} alt={`${concept.style} ${concept.palette} concept for ${concept.roomName}`} width={1024} height={768} sizes="(max-width: 960px) 100vw, 40vw" unoptimized /> : <div className="design-image-placeholder" role="img" aria-label={`Loading concept ${index + 1}`}><span className="spinner" aria-hidden="true" /></div>}
+            <ConceptImage concept={concept} index={index} />
             <div className="design-concept__body"><div className="design-concept__title"><div><h4>Option {index + 1}</h4><p className="muted small">{concept.style} · {concept.palette}</p></div>{concept.selected && <span className="badge badge--success">Selected</span>}</div>
               <p className="muted small">{new Date(concept.createdAt).toLocaleString()} · {concept.model} · confirmation {concept.confirmationRevision}</p>
               <div className="design-concept__actions"><button type="button" className="button button--secondary button--small" disabled={actingId === concept.id || concept.selected} onClick={() => void select(concept)}>{concept.selected ? "Selected" : "Select design"}</button><button type="button" className="button button--ghost button--small" disabled={actingId === concept.id} onClick={() => void remove(concept)}>Remove</button></div>

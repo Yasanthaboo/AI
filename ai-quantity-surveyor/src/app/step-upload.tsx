@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import { AnalysisFailure, jsonInit, request, runAnalysis, type Candidate, type FloorPlan, type Project } from "./api";
 import type { Settings } from "./settings";
+import { PlanGate, usePlans } from "./plans";
 
 type Stage = "idle" | "uploading" | "analyzing" | "preparing" | "error";
 export type { FloorPlan };
@@ -36,11 +37,13 @@ export default function UploadStep(props: {
   onFloorPlan: (floorPlan: FloorPlan) => void;
   onAnalyzed: (analysisId: string, candidate: Candidate) => void;
   onBack: () => void;
+  onViewPlans: () => void;
 }) {
+  const { can } = usePlans();
   const { project, engines, settings, file, floorPlan } = props;
   const [engineChoice, setEngine] = useState<string | null>(null);
   const preferredEngine = engineChoice ?? settings.analysis.preferredEngine;
-  const engine = preferredEngine === "demo" || engines.includes(preferredEngine) ? preferredEngine : engines.includes("gemini") ? "gemini" : "demo";
+  const engine = !can("aiAnalysis") ? "demo" : preferredEngine === "demo" || engines.includes(preferredEngine) ? preferredEngine : engines.includes("gemini") ? "gemini" : "demo";
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -156,13 +159,15 @@ export default function UploadStep(props: {
     <fieldset className="engine-options" disabled={busy}>
       <legend>Analysis engine</legend>
       {Object.entries(engineInfo).map(([key, info]) => {
-        const available = key === "demo" || engines.includes(key);
+        const entitled = key === "demo" || can("aiAnalysis");
+        const available = entitled && (key === "demo" || engines.includes(key));
         return <label key={key} className={`engine-option${engine === key ? " engine-option--selected" : ""}${available ? "" : " engine-option--disabled"}`}>
           <input type="radio" name="engine" value={key} checked={engine === key} disabled={!available} onChange={() => setEngine(key)} />
-          <span><strong>{info.label}</strong><small>{available ? info.detail : "Not configured on the server"}</small></span>
+          <span><strong>{info.label}</strong><small>{!entitled ? "Pro or Studio required" : available ? info.detail : "Not configured on the server"}</small></span>
         </label>;
       })}
     </fieldset>
+    {!can("aiAnalysis") && <PlanGate feature="aiAnalysis" onViewPlans={props.onViewPlans} />}
 
     {(busy || stage === "error") && <div className="progress-panel" role="status" aria-live="polite">
       <div className={`progress-bar${busy ? " progress-bar--active" : ""}`}><span /></div>

@@ -1,6 +1,6 @@
 # Requirements: Accounts and Home Design Studio
 
-**Status:** Requirements drafted; provider choices recorded. Supabase auth and the room Design Studio workflow are implemented, including revision-bound saved concepts and owner-scoped routes. Real OpenAI generation verification and exterior/roof visualization are pending.
+**Status:** Supabase auth, account plans, room concepts and conceptual exterior/roof options are implemented. NVIDIA FLUX generated two distinct 1024x1024 concepts in a live local UI check on 2026-10-21. Exterior options are revision-bound and owner-scoped, with flat/gable/hip/shed controls and an editable non-WebGL fallback. Live OpenAI generation, hosted verification, real Google login and reset-email delivery are not claimed verified.
 
 ## Goal
 
@@ -86,7 +86,7 @@ Acceptance criteria:
 - Verification/reset mail: Supabase Auth email delivery initially; production custom SMTP/domain configuration remains an environment/deployment prerequisite.
 - Interior concepts: OpenAI Images using confirmed room data only; raw floor-plan/image uploads are prohibited.
 - Existing project migration: assign ownerless projects to an explicitly configured initial admin account, never to all users.
-- Exterior: conceptual 3D roof-style visualization; not a structural or code-compliance model.
+- Exterior: Pro/Studio conceptual single-storey rectangular envelope with reviewed, editable visualization assumptions. Flat/gable/hip/shed forms, 5-60 degree supported pitched roofs (flat uses schematic zero), 0-2 m overhang and appearance-only finishes; not a structural or code-compliance model.
 - Secrets such as Supabase keys and OpenAI API keys must be configured outside source control and must never be requested in chat.
 
 ## Current Architecture Notes
@@ -94,7 +94,15 @@ Acceptance criteria:
 - The browser now gates the workspace on a Supabase session when configured and forwards bearer tokens with API calls. Anonymous mode requires explicit `AUTH_ALLOW_ANONYMOUS=true`.
 - PostgreSQL projects have an owner column, owner-filtered operations, and an initial-admin adoption migration.
 - Confirmed rooms/openings and source revisions already exist and can anchor the design snapshot.
-- The current Three.js model is a conceptual room layout, not a complete exterior/elevation model.
+- The room model remains conceptual. The separate Three.js exterior view visualizes only a reviewed rectangular envelope and roof; actual elevations, openings, extra levels and structural properties are not inferred as facts.
 - `api/internal/auth` verifies bearer tokens against Supabase Auth and adds the verified user to request context. The server scopes project-linked API resources to the verified owner and migrates legacy `local` projects to `INITIAL_ADMIN_USER_ID` before serving requests.
 - Local/isolated Compose explicitly opts into anonymous development mode. The web client supports email/password, Google OAuth, verification, password reset/recovery, sign-out, and bearer forwarding. Real Supabase credentials, Google provider setup, SMTP configuration, and live provider smoke tests remain deployment prerequisites.
-- The room Design Studio uses the latest confirmed room snapshot or a selected prior confirmation revision. It generates two concepts using confirmed text dimensions/openings only, stores PNGs with model/style/palette and revision provenance, and exposes a per-user daily limit. Configure API-only `OPENAI_API_KEY`; no live generation has been performed in this environment.
+- The room Design Studio uses the latest confirmed room snapshot or a selected prior confirmation revision. It generates two concepts using confirmed text dimensions/openings only, stores PNGs with model/style/palette and revision provenance, and exposes a per-user daily limit. NVIDIA generation is live-verified locally; the OpenAI and optional local SDXL adapters remain separate provider options. Per-image load/decode errors now have retry controls and authenticated PNG download links. Room dimensions are rounded for display only.
+- Exterior save/read endpoints verify project ownership, source analysis and confirmation revision; paid 3D access is enforced server-side. PostgreSQL stores immutable exterior options separately from financial snapshots, and a disposable API restart test verifies reopening the saved source-bound option.
+
+## Release Verification Boundary
+
+- Local browser coverage includes authenticated legacy workflows, plan gates, all four exterior forms, desktop/mobile screenshots, nonblank canvas pixels/orbit interaction, image retry/download, OAuth request construction and reset redirects. These mocks do not prove external OAuth completion or mail delivery.
+- Real Poppler preparation passes under a 512 MiB, 128-process, one-CPU container cap with non-root execution, dropped capabilities and no-new-privileges. This is a fixture workload check, not certification of hosted cold starts or all real-image/concurrent workloads.
+- Production dependency audit is clean. The development ESLint tree still reports five high findings from the unpatched braces stack-exhaustion advisory GHSA-vfj7-8cjw-p6xm; Next.js/ESLint config versions are aligned at 16.4.2. No forced framework downgrade or advisory suppression is used.
+- At the user's request, hosted checks and live Google/reset-mail checks remain pending. A deployed web/API URL, designated test identity and interactive mailbox/Google access are required; no account credentials are requested in chat.

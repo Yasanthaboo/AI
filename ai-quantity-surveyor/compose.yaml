@@ -15,14 +15,28 @@ services:
     restart: unless-stopped
 
   api:
+    mem_limit: ${API_MEMORY_LIMIT:-512m}
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     build:
       context: .
       dockerfile: Dockerfile.api
     environment:
       DATABASE_URL: postgres://surveyor:${POSTGRES_PASSWORD}@db:5432/surveyor?sslmode=disable
       AUTH_ALLOW_ANONYMOUS: ${AUTH_ALLOW_ANONYMOUS:-true}
+      APP_ENV: ${APP_ENV:-production}
+      PLAN_DEMO_MODE: ${PLAN_DEMO_MODE:-false}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SEED_PLAN_USERS: ${SEED_PLAN_USERS:-false}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SEED_PLAN_FREE_EMAIL: ${SEED_PLAN_FREE_EMAIL:-demo-free@quantity-surveyor.test}
+      SEED_PLAN_PRO_EMAIL: ${SEED_PLAN_PRO_EMAIL:-demo-pro@quantity-surveyor.test}
+      SEED_PLAN_STUDIO_EMAIL: ${SEED_PLAN_STUDIO_EMAIL:-demo-studio@quantity-surveyor.test}
+      SEED_PLAN_FREE_PASSWORD: ${SEED_PLAN_FREE_PASSWORD:-}
+      SEED_PLAN_PRO_PASSWORD: ${SEED_PLAN_PRO_PASSWORD:-}
+      SEED_PLAN_STUDIO_PASSWORD: ${SEED_PLAN_STUDIO_PASSWORD:-}
       INITIAL_ADMIN_USER_ID: ${INITIAL_ADMIN_USER_ID:-}
       PROVIDER_QUOTA_SCOPE: ${PROVIDER_QUOTA_SCOPE:-}
       GEMINI_DAILY_CALL_LIMIT: ${GEMINI_DAILY_CALL_LIMIT:-0}

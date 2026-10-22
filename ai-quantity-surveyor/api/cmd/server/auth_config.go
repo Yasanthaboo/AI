@@ -15,6 +15,9 @@ func authConfigurationFromEnvironment() (*auth.Verifier, string, error) {
 		return nil, "", errors.New("SUPABASE_URL and SUPABASE_ANON_KEY must be configured together")
 	}
 	if endpoint == "" {
+		if os.Getenv("APP_ENV") == "production" {
+			return nil, "", errors.New("anonymous access is prohibited in production; configure Supabase auth")
+		}
 		if os.Getenv("AUTH_ALLOW_ANONYMOUS") != "true" {
 			return nil, "", errors.New("Supabase auth is required; AUTH_ALLOW_ANONYMOUS=true is only for isolated development and tests")
 		}

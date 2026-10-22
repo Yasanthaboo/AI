@@ -5,6 +5,7 @@ import { describeMeasurement, formatNumber, jsonInit, request, type Architectura
 import AnalysisDetails from "./analysis-details";
 import DrawingView from "./drawing-view";
 import { describeDefaultHeight, wallHeightIn, type Settings } from "./settings";
+import { usePlans } from "./plans";
 
 type EditableRoom = { id: string; name: string; length: string; width: string; wallHeight: string; unit: string; bounds?: Bounds | null; flag: string | null; defaultHeight?: boolean };
 type EditableOpening = { id: string; type: "Door" | "Window"; roomId: string; width: string; height: string; unit: string };
@@ -37,6 +38,7 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
   onBack: () => void;
 }) {
   const defaultLabel = `Default (${describeDefaultHeight(settings)})`;
+  const { can } = usePlans();
   const [rooms, setRooms] = useState<EditableRoom[]>(() => (candidate.rooms || []).map((room, index) => {
     const unit = room.length?.unit || room.width?.unit || settings.preferredUnit;
     const wallHeight = measurementText(room.wallHeight, unit);
@@ -200,7 +202,7 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
       <button type="button" className="button button--ghost" onClick={onBack} disabled={busy}>Back</button>
       <div className="step-footer__end">
         {problems.length > 0 && <span className="muted">{problems.length === 1 ? "1 item needs" : `${problems.length} items need`} attention</span>}
-        <button type="button" className="button button--primary" onClick={confirm} disabled={busy || problems.length > 0}>{busy && <span className="spinner" aria-hidden />}{busy ? "Confirming…" : "Confirm and build model"}</button>
+        <button type="button" className="button button--primary" onClick={confirm} disabled={busy || problems.length > 0}>{busy && <span className="spinner" aria-hidden />}{busy ? "Confirming…" : can("model3d") ? "Confirm and build model" : "Confirm dimensions"}</button>
       </div>
     </footer>
   </section>;
