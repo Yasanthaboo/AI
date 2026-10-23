@@ -4,11 +4,24 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY api ./api
 RUN CGO_ENABLED=0 go build -trimpath -o /out/server ./api/cmd/server
+RUN CGO_ENABLED=0 go build -trimpath -o /out/seed-plan-users ./api/cmd/seed-plan-users
+
+FROM builder AS test-builder
+RUN CGO_ENABLED=0 go test -c -o /out/analysis.test ./api/internal/analysis
+RUN CGO_ENABLED=0 go test -c -o /out/materials.test ./api/internal/materials
+
+FROM alpine:3.21 AS page-tests
+RUN apk add --no-cache ca-certificates poppler-utils
+COPY --from=test-builder /out/analysis.test /app/analysis.test
+COPY --from=test-builder /out/materials.test /app/materials.test
+USER 10001:10001
+CMD ["/app/analysis.test", "-test.run", "TestPreparePDFWithPoppler", "-test.v"]
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates poppler-utils
 WORKDIR /app
 COPY --from=builder /out/server /app/server
+COPY --from=builder /out/seed-plan-users /app/seed-plan-users
 USER 10001:10001
 EXPOSE 8080
 CMD ["/app/server"]

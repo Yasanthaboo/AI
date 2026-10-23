@@ -26,6 +26,7 @@ var supportedTypes = map[string]bool{
 
 type Project struct {
 	ID          string    `json:"id"`
+	OwnerID     string    `json:"-"`
 	Name        string    `json:"name"`
 	Client      string    `json:"client,omitempty"`
 	Location    string    `json:"location,omitempty"`
@@ -75,9 +76,14 @@ type Service struct {
 
 type Store interface {
 	CreateProject(Details) (Project, error)
+	CreateProjectForOwner(Details, string) (Project, error)
 	GetProject(string) (Project, bool)
+	GetProjectForOwner(string, string) (Project, bool)
 	ListProjects() []Project
+	ListProjectsForOwner(string) []Project
 	SetArchived(string, bool) (Project, error)
+	SetArchivedForOwner(string, string, bool) (Project, error)
+	AssignOwnerlessProjects(string) error
 	SaveFloorPlan(string, string, string, []byte) (FloorPlan, error)
 	GetFloorPlan(string) (FloorPlan, bool)
 	FloorPlanForProject(string) (FloorPlan, bool)
@@ -90,11 +96,19 @@ func Duplicate(store Store, id string) (Project, error) {
 	if !ok {
 		return Project{}, fmt.Errorf("project %q not found", id)
 	}
+	return DuplicateForOwner(store, id, source.OwnerID)
+}
+
+func DuplicateForOwner(store Store, id, ownerID string) (Project, error) {
+	source, ok := store.GetProjectForOwner(id, ownerID)
+	if !ok {
+		return Project{}, fmt.Errorf("project %q not found", id)
+	}
 	name := source.Name + " (copy)"
 	if len(name) > 120 {
 		name = strings.TrimSpace(source.Name[:113]) + " (copy)"
 	}
-	copied, err := store.CreateProject(Details{Name: name, Client: source.Client, Location: source.Location, Description: source.Description})
+	copied, err := store.CreateProjectForOwner(Details{Name: name, Client: source.Client, Location: source.Location, Description: source.Description}, ownerID)
 	if err != nil {
 		return Project{}, err
 	}
@@ -103,7 +117,7 @@ func Duplicate(store Store, id string) (Project, error) {
 			if _, err := store.SaveFloorPlan(copied.ID, floorPlan.FileName, floorPlan.ContentType, content); err != nil {
 				return Project{}, err
 			}
-			copied, _ = store.GetProject(copied.ID)
+			copied, _ = store.GetProjectForOwner(copied.ID, ownerID)
 		}
 	}
 	return copied, nil
@@ -128,6 +142,12 @@ func NewPersistentService(path string) (*Service, error) {
 		return nil, fmt.Errorf("decode project store: %w", err)
 	}
 	service.projects = state.Projects
+	for id, ownerID := range state.Owners {
+		if project, found := service.projects[id]; found {
+			project.OwnerID = ownerID
+			service.projects[id] = project
+		}
+	}
 	service.floorPlans = state.FloorPlans
 	service.files = state.Files
 	if service.projects == nil {
@@ -144,15 +164,24 @@ func NewPersistentService(path string) (*Service, error) {
 
 type persistedState struct {
 	Projects   map[string]Project   `json:"projects"`
+	Owners     map[string]string    `json:"owners,omitempty"`
 	FloorPlans map[string]FloorPlan `json:"floorPlans"`
 	Files      map[string][]byte    `json:"files"`
 }
 
 func (service *Service) CreateProject(details Details) (Project, error) {
+	return service.CreateProjectForOwner(details, "local")
+}
+
+func (service *Service) CreateProjectForOwner(details Details, ownerID string) (Project, error) {
+	if strings.TrimSpace(ownerID) == "" {
+		return Project{}, errors.New("project owner is required")
+	}
 	project, err := details.project()
 	if err != nil {
 		return Project{}, err
 	}
+	project.OwnerID = ownerID
 	service.mu.Lock()
 	service.projects[project.ID] = project
 	err = service.persistLocked()
@@ -170,6 +199,11 @@ func (service *Service) GetProject(id string) (Project, bool) {
 	return project, ok
 }
 
+func (service *Service) GetProjectForOwner(id, ownerID string) (Project, bool) {
+	project, found := service.GetProject(id)
+	return project, found && project.OwnerID == ownerID
+}
+
 func (service *Service) ListProjects() []Project {
 	service.mu.RLock()
 	defer service.mu.RUnlock()
@@ -179,6 +213,17 @@ func (service *Service) ListProjects() []Project {
 	}
 	sort.Slice(projects, func(left, right int) bool { return projects[left].CreatedAt.After(projects[right].CreatedAt) })
 	return projects
+}
+
+func (service *Service) ListProjectsForOwner(ownerID string) []Project {
+	projects := service.ListProjects()
+	owned := make([]Project, 0, len(projects))
+	for _, project := range projects {
+		if project.OwnerID == ownerID {
+			owned = append(owned, project)
+		}
+	}
+	return owned
 }
 
 func (service *Service) SetArchived(id string, archived bool) (Project, error) {
@@ -191,6 +236,38 @@ func (service *Service) SetArchived(id string, archived bool) (Project, error) {
 	project.Archived = archived
 	service.projects[id] = project
 	return project, service.persistLocked()
+}
+
+func (service *Service) SetArchivedForOwner(id, ownerID string, archived bool) (Project, error) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	project, ok := service.projects[id]
+	if !ok || project.OwnerID != ownerID {
+		return Project{}, fmt.Errorf("project %q not found", id)
+	}
+	project.Archived = archived
+	service.projects[id] = project
+	return project, service.persistLocked()
+}
+
+func (service *Service) AssignOwnerlessProjects(ownerID string) error {
+	if strings.TrimSpace(ownerID) == "" {
+		return errors.New("migration owner is required")
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	changed := false
+	for id, project := range service.projects {
+		if project.OwnerID == "" || (ownerID != "local" && project.OwnerID == "local") {
+			project.OwnerID = ownerID
+			service.projects[id] = project
+			changed = true
+		}
+	}
+	if changed {
+		return service.persistLocked()
+	}
+	return nil
 }
 
 func (service *Service) FloorPlanForProject(projectID string) (FloorPlan, bool) {
@@ -254,7 +331,13 @@ func (service *Service) persistLocked() error {
 	if err := os.MkdirAll(filepath.Dir(service.persistencePath), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(persistedState{Projects: service.projects, FloorPlans: service.floorPlans, Files: service.files}, "", "  ")
+	owners := make(map[string]string, len(service.projects))
+	for id, project := range service.projects {
+		if project.OwnerID != "" {
+			owners[id] = project.OwnerID
+		}
+	}
+	data, err := json.MarshalIndent(persistedState{Projects: service.projects, Owners: owners, FloorPlans: service.floorPlans, Files: service.files}, "", "  ")
 	if err != nil {
 		return err
 	}

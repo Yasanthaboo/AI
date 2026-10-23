@@ -7,8 +7,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+func TestProviderRedirectsDoNotReplayCalls(t *testing.T) {
+	var forwarded atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		forwarded.Add(1)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	for _, analyzer := range []Analyzer{
+		GeminiAnalyzer{Endpoint: redirect.URL, APIKey: "test-key", Model: "test-model", Client: redirect.Client()},
+		OllamaAnalyzer{Endpoint: redirect.URL, APIKey: "test-key", Client: redirect.Client()},
+	} {
+		if _, err := analyzer.Analyze(context.Background(), []byte("fixture"), "plan.png"); err == nil || !strings.Contains(err.Error(), "307") {
+			t.Fatalf("redirect was not rejected: %v", err)
+		}
+	}
+	if forwarded.Load() != 0 {
+		t.Fatal("provider redirect replayed a reserved call")
+	}
+	if redirect.Client().CheckRedirect != nil {
+		t.Fatal("caller HTTP client was mutated")
+	}
+}
 
 func TestGeminiAnalyzerSendsDrawingAndParsesResponse(t *testing.T) {
 	for _, test := range []struct{ name, mimeType string }{{"plan.png", "image/png"}, {"plan.pdf", "application/pdf"}} {

@@ -10,7 +10,35 @@ services:
     envVars:
       - key: PORT
         value: "8080"
+      - key: APP_ENV
+        value: production
+      - key: AUTH_ALLOW_ANONYMOUS
+        value: "false"
+      - key: PLAN_DEMO_MODE
+        value: "false"
+      - key: SEED_PLAN_USERS
+        value: "false"
+      - key: SEED_PLAN_FREE_EMAIL
+        value: demo-free@quantity-surveyor.test
+      - key: SEED_PLAN_PRO_EMAIL
+        value: demo-pro@quantity-surveyor.test
+      - key: SEED_PLAN_STUDIO_EMAIL
+        value: demo-studio@quantity-surveyor.test
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SEED_PLAN_FREE_PASSWORD
+        sync: false
+      - key: SEED_PLAN_PRO_PASSWORD
+        sync: false
+      - key: SEED_PLAN_STUDIO_PASSWORD
+        sync: false
       - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: INITIAL_ADMIN_USER_ID
         sync: false
       - key: ALLOWED_ORIGIN
         sync: false
@@ -18,12 +46,38 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
+      - key: PROVIDER_QUOTA_SCOPE
+        sync: false
+      - key: GEMINI_DAILY_CALL_LIMIT
+        sync: false
+      - key: OLLAMA_DAILY_CALL_LIMIT
+        sync: false
       - key: OLLAMA_ENDPOINT
         sync: false
       - key: OLLAMA_API_KEY
         sync: false
       - key: OLLAMA_MODEL
         value: llama3.2-vision
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_NEMOTRON_MODEL
+        value: nvidia/nemotron-3.5-super-vl-120b-a12b
+      - key: NVIDIA_NIM_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: NVIDIA_DAILY_CALL_LIMIT
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ROOM_DESIGN_PROVIDER
+        value: openai
+      - key: OPENAI_IMAGE_MODEL
+        value: gpt-image-1
+      - key: NVIDIA_FLUX_MODEL
+        value: black-forest-labs/flux.1-dev
+      - key: NVIDIA_NIM_IMAGE_ENDPOINT
+        sync: false
+      - key: ROOM_DESIGN_DAILY_IMAGE_LIMIT
+        value: "4"
 
   - type: web
     name: ai-quantity-surveyor-web
@@ -42,3 +96,7 @@ services:
           type: web
           name: ai-quantity-surveyor-api
           envVarKey: RENDER_EXTERNAL_URL
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false

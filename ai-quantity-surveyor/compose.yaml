@@ -15,16 +15,50 @@ services:
     restart: unless-stopped
 
   api:
+    mem_limit: ${API_MEMORY_LIMIT:-512m}
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     build:
       context: .
       dockerfile: Dockerfile.api
     environment:
       DATABASE_URL: postgres://surveyor:${POSTGRES_PASSWORD}@db:5432/surveyor?sslmode=disable
+      AUTH_ALLOW_ANONYMOUS: ${AUTH_ALLOW_ANONYMOUS:-true}
+      APP_ENV: ${APP_ENV:-production}
+      PLAN_DEMO_MODE: ${PLAN_DEMO_MODE:-false}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SEED_PLAN_USERS: ${SEED_PLAN_USERS:-false}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SEED_PLAN_FREE_EMAIL: ${SEED_PLAN_FREE_EMAIL:-demo-free@quantity-surveyor.test}
+      SEED_PLAN_PRO_EMAIL: ${SEED_PLAN_PRO_EMAIL:-demo-pro@quantity-surveyor.test}
+      SEED_PLAN_STUDIO_EMAIL: ${SEED_PLAN_STUDIO_EMAIL:-demo-studio@quantity-surveyor.test}
+      SEED_PLAN_FREE_PASSWORD: ${SEED_PLAN_FREE_PASSWORD:-}
+      SEED_PLAN_PRO_PASSWORD: ${SEED_PLAN_PRO_PASSWORD:-}
+      SEED_PLAN_STUDIO_PASSWORD: ${SEED_PLAN_STUDIO_PASSWORD:-}
+      INITIAL_ADMIN_USER_ID: ${INITIAL_ADMIN_USER_ID:-}
+      PROVIDER_QUOTA_SCOPE: ${PROVIDER_QUOTA_SCOPE:-}
+      GEMINI_DAILY_CALL_LIMIT: ${GEMINI_DAILY_CALL_LIMIT:-0}
+      OLLAMA_DAILY_CALL_LIMIT: ${OLLAMA_DAILY_CALL_LIMIT:-0}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_NEMOTRON_MODEL: ${NVIDIA_NEMOTRON_MODEL:-nvidia/nemotron-3.5-super-vl-120b-a12b}
+      NVIDIA_NIM_BASE_URL: ${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      NVIDIA_DAILY_CALL_LIMIT: ${NVIDIA_DAILY_CALL_LIMIT:-0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ROOM_DESIGN_PROVIDER: ${ROOM_DESIGN_PROVIDER:-}
+      ROOM_DESIGN_FALLBACK: ${ROOM_DESIGN_FALLBACK:-}
+      LOCAL_IMAGE_ENDPOINT: ${LOCAL_IMAGE_ENDPOINT:-}
+      LOCAL_IMAGE_MODEL: ${LOCAL_IMAGE_MODEL:-}
+      OPENAI_IMAGE_MODEL: ${OPENAI_IMAGE_MODEL:-gpt-image-1}
+      NVIDIA_FLUX_MODEL: ${NVIDIA_FLUX_MODEL:-black-forest-labs/flux.1-dev}
+      NVIDIA_NIM_IMAGE_ENDPOINT: ${NVIDIA_NIM_IMAGE_ENDPOINT:-}
+      ROOM_DESIGN_DAILY_IMAGE_LIMIT: ${ROOM_DESIGN_DAILY_IMAGE_LIMIT:-4}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
@@ -45,6 +79,8 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
     ports:
       - "127.0.0.1:${WEB_PORT:-3001}:3000"
     depends_on:

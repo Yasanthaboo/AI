@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { buildWalls, wallLength, type ModelRoom, type Wall } from "./preview";
+import { useTheme } from "./theme-provider";
 
 type Hover = { x: number; y: number; room: ModelRoom };
 type Controls = { reset: () => void; top: () => void; screenshot: () => string };
@@ -30,7 +31,9 @@ function wallPieces(wall: Wall): [number, number, number, number][] {
 }
 
 export default function RoomScene({ rooms, selectedId, onSelect }: { rooms: ModelRoom[]; selectedId?: string; onSelect?: (id: string) => void }) {
+  const { theme } = useTheme();
   const host = useRef<HTMLDivElement>(null);
+  const activeRenderer = useRef<THREE.WebGLRenderer | null>(null);
   const controls = useRef<Controls | null>(null);
   const floors = useRef(new Map<string, THREE.MeshStandardMaterial>());
   const select = useRef(onSelect);
@@ -52,7 +55,8 @@ export default function RoomScene({ rooms, selectedId, onSelect }: { rooms: Mode
       return () => cancelAnimationFrame(frame);
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0xf4f7fb);
+    renderer.setClearColor(new THREE.Color(getComputedStyle(container).backgroundColor));
+    activeRenderer.current = renderer;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.setAttribute("aria-label", "3D floor plan model");
     container.appendChild(renderer.domElement);
@@ -201,10 +205,15 @@ export default function RoomScene({ rooms, selectedId, onSelect }: { rooms: Mode
         }
       });
       renderer.dispose();
+      activeRenderer.current = null;
       renderer.domElement.remove();
       labels.domElement.remove();
     };
   }, [rooms, attempt]);
+
+  useEffect(() => {
+    if (host.current) activeRenderer.current?.setClearColor(new THREE.Color(getComputedStyle(host.current).backgroundColor));
+  }, [theme]);
 
   useEffect(() => {
     rooms.forEach((room) => {
