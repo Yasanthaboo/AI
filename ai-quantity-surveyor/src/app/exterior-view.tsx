@@ -62,6 +62,7 @@ function ExteriorEditor({ project, confirmation }: { project: Project; confirmat
       <div className="exterior-preview">
         <div className="design-results__heading"><h3>{roofForms.find((roof) => roof.id === draft.roof)?.label} roof</h3><span className="badge">Assumed single storey</span></div>
         {validExterior(draft) ? <ExteriorScene options={draft} /> : <p className="alert alert--warning">Enter supported envelope dimensions before rendering. Missing dimensions are not inferred as verified facts.</p>}
+        <p className="cell-note">Facade colors, trim and landscaping are illustrative styling only, not verified finishes or site works. Doors and windows are not shown.</p>
         <dl className="summary-grid"><div><dt>Envelope</dt><dd>{draft.lengthM} x {draft.widthM} m</dd></div><div><dt>Wall height</dt><dd>{draft.wallHeightM} m</dd></div><div><dt>Roof pitch</dt><dd>{draft.pitchDegrees} degrees</dd></div><div><dt>Overhang</dt><dd>{draft.overhangM} m</dd></div></dl>
         <p className="muted small exterior-provenance">Analysis {confirmation.analysisId} - confirmed revision {confirmation.revision}. Initial envelope suggestions follow the conceptual room arrangement; review them against the actual building. No elevations or extra levels are verified.</p>
       </div>

@@ -24,6 +24,10 @@ Deliver recognition quality and source-drawing evidence first, then deterministi
 
 Feature 005 has managed job/source persistence, page/source-image APIs, dimension review and correction history; immutable paint/tile/plaster budgets and fictional-price workflows remain separate from QS totals. Plaster recipes require explicit thickness, consumption/mix, density and pack inputs; the UI provides no defaults. Unknown/excluded charges remain incomplete in previews and separate exports. Constitution 1.6.0 ratifies plaster-material calculation but does not approve structural mix design, plaster suppliers or plaster price coverage. `SURVEYOR_ENABLE_PLASTER_MATERIALS` defaults off; Compose enables it only for the isolated test stack. None of the sample prices are live quotations or stock reservations. Current Go, vet, TypeScript, focused lint and all 26 browser tests pass against disposable sample infrastructure; recognition accuracy, live supplier approval, hosted verification and private-release checks remain open.
 
+### Dimension Review
+
+Dimension review includes **All looks right** to clear all room uncertainty flags after every room has a name and positive length, width and wall height. Individual **Looks right** actions remain available. Bulk review does not save data, fill missing measurements, acknowledge stairs/balconies, or bypass opening validation; **Confirm and build model** (or **Confirm dimensions** on Free) remains the explicit save step.
+
 ### Provider Quotas
 
 External analysis providers require `DATABASE_URL`, their usual provider settings, a shared nonsecret `PROVIDER_QUOTA_SCOPE`, and positive daily limits (`GEMINI_DAILY_CALL_LIMIT`, `OLLAMA_DAILY_CALL_LIMIT`, or `NVIDIA_DAILY_CALL_LIMIT`) below the account allowance. NVIDIA Nemotron analysis uses `NVIDIA_API_KEY`, `NVIDIA_NEMOTRON_MODEL` (default `nvidia/nemotron-3.5-super-vl-120b-a12b`), and `NVIDIA_NIM_BASE_URL` (default `https://integrate.api.nvidia.com/v1`). The API sends the prepared page PNG to the NVIDIA chat-completions endpoint and expects structured JSON output. External engines are hidden unless PostgreSQL, a shared quota scope, and a positive per-provider limit are configured. Set values only on the API service. Call quotas limit attempts, not guaranteed monetary spend.
@@ -114,6 +118,8 @@ Before handing out access, confirm that logs report each plan/email ready (passw
 ### Exterior and Roof Options
 
 After confirming dimensions, **Exterior** opens a separate Pro/Studio view with flat, gable, hip and shed roofs. Supported pitch is 5-60 degrees for pitched forms; flat uses a zero-pitch schematic surface and disables that control. Overhang is 0-2 m. Metal/tile/membrane choices change appearance only. Roof changes never write to confirmations, quantity calculations, material budgets or estimates.
+
+The preview uses richer roof colors, warm walls, decorative facade accents, soft shadows and an illustrative landscaped base. Styling is not a verified finish specification or site design; doors and windows remain unmodeled. Drag to orbit, scroll/pinch to zoom, or use the reset and PNG screenshot controls. Styling does not change saved dimensions or quantities.
 
 The first envelope suggestion uses the conceptual arrangement of confirmed rooms and known wall heights, not verified building elevations. Users must review length/width (1-100 m), wall height (1-12 m) and the explicit assumptions before saving. The model is a rectangular single-storey envelope, not BIM: openings, setbacks, additional levels, drainage, material specifications, loads and code compliance are unmodeled. Non-WebGL browsers retain the same editable controls and save/reopen actions.
 

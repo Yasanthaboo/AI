@@ -60,7 +60,11 @@ test("roof geometry honors pitch, overhang and supported bounds", () => {
 });
 
 test("roof options render all forms and reopen exact confirmed snapshots", async ({ page }) => {
+  const renderingErrors: string[] = [];
+  page.on("pageerror", (error) => renderingErrors.push(error.message));
+  page.on("console", (message) => { if (["warning", "error"].includes(message.type()) && message.text().includes("THREE.")) renderingErrors.push(message.text()); });
   const fixture = await setup(page);
+  await expect(page.getByText("Facade colors, trim and landscaping are illustrative styling only, not verified finishes or site works. Doors and windows are not shown.", { exact: true })).toBeVisible();
   const canvas = page.locator(".exterior-host canvas");
   await expect(canvas).toBeVisible();
   const samples = new Set<string>();
@@ -101,6 +105,12 @@ test("roof options render all forms and reopen exact confirmed snapshots", async
   const bounds = (await canvas.boundingBox())!;
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2); await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2 + 70, bounds.y + bounds.height / 2 + 20, { steps: 8 }); await page.mouse.up();
   await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).not.toBe(beforeOrbit);
+  await page.getByRole("button", { name: "Reset exterior view", exact: true }).click();
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download exterior screenshot", exact: true }).click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe("conceptual-shed-roof.png");
+  expect(await download.failure()).toBeNull();
   await page.reload();
   await page.getByRole("button", { name: "Exterior", exact: true }).click();
   await expect(page.getByRole("radio", { name: "Shed", exact: true })).toBeChecked();
@@ -109,6 +119,31 @@ test("roof options render all forms and reopen exact confirmed snapshots", async
   await expect(page.getByLabel("Saved exterior option")).toHaveValue("");
   await page.getByLabel("Exterior source revision").selectOption("2");
   await expect(page.getByRole("radio", { name: "Shed", exact: true })).toBeChecked();
+  expect(renderingErrors).toEqual([]);
+});
+
+test("roof finish colors are distinct without changing dimensions or saving data", async ({ page }) => {
+  const fixture = await setup(page);
+  const canvas = page.locator(".exterior-host canvas");
+  const appearance = page.getByRole("combobox", { name: "Roof appearance", exact: true });
+  for (const finish of ["metal", "tile", "membrane"]) {
+    await appearance.selectOption(finish);
+    await expect.poll(() => canvas.evaluate((element, selectedFinish) => {
+      const sample = document.createElement("canvas"); sample.width = 64; sample.height = 64;
+      const context = sample.getContext("2d")!; context.drawImage(element as HTMLCanvasElement, 0, 0, 64, 64);
+      const pixels = context.getImageData(0, 0, 64, 32).data;
+      let roofPixels = 0;
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        const [red, green, blue] = [pixels[offset], pixels[offset + 1], pixels[offset + 2]];
+        if (selectedFinish === "metal" ? green > red * 1.5 && blue > red * 1.5 : selectedFinish === "tile" ? red > green * 1.3 && red > blue * 1.3 : blue > red * 1.2 && blue > green * 1.05) roofPixels++;
+      }
+      return roofPixels;
+    }, finish)).toBeGreaterThan(30);
+  }
+  await expect(page.getByRole("spinbutton", { name: "Envelope length m", exact: true })).toHaveValue("8");
+  await expect(page.getByRole("spinbutton", { name: "Envelope width m", exact: true })).toHaveValue("6");
+  await expect(page.getByRole("spinbutton", { name: "Exterior wall height m", exact: true })).toHaveValue("2.7");
+  expect(fixture.mutations).toEqual([]);
 });
 
 test("non-WebGL exterior retains editable and saved roof choices", async ({ page }) => {

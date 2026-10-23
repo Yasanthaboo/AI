@@ -115,6 +115,7 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
   };
 
   const flagged = rooms.filter((room) => room.flag).length;
+  const roomDimensionsComplete = rooms.length > 0 && rooms.every((room) => room.name.trim() && positive(room.length) && positive(room.width) && positive(room.wallHeight));
   return <section className="card step-card">
     <header className="step-header">
       <div><p className="eyebrow">Step 3</p><h2>Review the extraction</h2><p className="muted">Check what the AI read from the drawing. Quantities are calculated only from values you confirm here.</p></div>
@@ -149,6 +150,13 @@ export default function ReviewStep({ analysisId, candidate, analysis, settings, 
       </div>
     </div>
 
+    <div className="room-review-actions">
+      <div>
+        <h3 className="section-title">Room dimensions</h3>
+        <p id="room-review-help" className="cell-note" role="status">{flagged ? "After checking and filling in every room, clear all room flags in one click. This does not save or confirm your data." : "No room flags remain. Check doors, windows and features before confirming below."}</p>
+      </div>
+      <button type="button" className="button button--secondary button--small" disabled={busy || !flagged || !roomDimensionsComplete} aria-describedby="room-review-help" onClick={() => setRooms((current) => current.map((room) => ({ ...room, flag: null })))}>All looks right</button>
+    </div>
     <div className="table-wrap">
       <table className="data-table">
         <thead><tr><th>Room</th><th>Length</th><th>Width</th><th>Wall height</th><th>Unit</th><th><span className="sr-only">Actions</span></th></tr></thead>

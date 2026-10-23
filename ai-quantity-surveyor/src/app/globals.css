@@ -175,7 +175,10 @@ button:disabled { cursor: not-allowed; }
 .exterior-controls output { color: var(--ink-soft); font-size: 12px; }
 .exterior-preview { display: grid; gap: 16px; min-width: 0; }
 .exterior-render { position: relative; min-width: 0; }
-.exterior-host { width: 100%; height: 480px; background: var(--paper); overflow: hidden; }
+.exterior-host { width: 100%; height: 480px; background: #dcecf3; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; cursor: grab; }
+.exterior-host:active { cursor: grabbing; }
+:root[data-theme="dark"] .exterior-host { background: #172e42; }
+.exterior-orbit-hint { margin: 10px 0 0; }
 .exterior-host[hidden] { display: none; }
 .exterior-host canvas { display: block; }
 .exterior-tools { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
@@ -273,6 +276,10 @@ button:disabled { cursor: not-allowed; }
 .drawing-tools .icon-button:hover { background: var(--brand-soft); color: var(--brand-dark); }
 .drawing-scroll { overflow: auto; max-height: 460px; max-width: 100%; }
 .review-preview-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 20px; align-items: start; }
+.room-review-actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin: 24px 0 12px; }
+.room-review-actions > div { flex: 1 1 240px; }
+.room-review-actions .section-title { margin: 0 0 6px; }
+.room-review-actions .cell-note { margin: 0; }
 .review-drawing, .dimension-comparison { min-width: 0; }
 .dimension-comparison dl { margin: 12px 0; display: grid; gap: 14px; }
 .dimension-comparison dt { font-weight: 600; margin-bottom: 4px; }
